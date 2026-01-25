@@ -190,7 +190,6 @@
                         prizeId: prize.id
                     };
                     
-                    // 使用 no-cors 模式發送
                     await fetch(GOOGLE_SCRIPT_URL, {
                         method: 'POST',
                         mode: 'no-cors', 
@@ -209,13 +208,22 @@
             const audioCtxRef = useRef(null);
             const scratchGainNodeRef = useRef(null);
             const isScratchingRef = useRef(false);
-            const isAudioInitializedRef = useRef(false);
+            
+            // 強健的音效初始化功能
+            const ensureAudioContext = useCallback(() => {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContext) return null;
 
-            const initAudio = useCallback(() => {
-                if (isAudioInitializedRef.current || typeof window === 'undefined') return;
+                // 如果 Context 存在且沒壞掉，直接回傳
+                if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+                    if (audioCtxRef.current.state === 'suspended') {
+                        audioCtxRef.current.resume().catch(e => console.log("Resume failed", e));
+                    }
+                    return audioCtxRef.current;
+                }
+
+                // 否則，重建整個音效引擎
                 try {
-                    const AudioContext = window.AudioContext || window.webkitAudioContext;
-                    if (!AudioContext) return;
                     const ctx = new AudioContext();
                     audioCtxRef.current = ctx;
                     
@@ -227,28 +235,32 @@
                     const whiteNoiseSource = ctx.createBufferSource();
                     whiteNoiseSource.buffer = noiseBuffer;
                     whiteNoiseSource.loop = true;
+                    
                     const gainNode = ctx.createGain();
                     gainNode.gain.value = 0;
+                    
                     const filter = ctx.createBiquadFilter();
                     filter.type = 'lowpass';
                     filter.frequency.value = 600; 
+                    
                     whiteNoiseSource.connect(filter);
                     filter.connect(gainNode);
                     gainNode.connect(ctx.destination);
+                    
                     whiteNoiseSource.start();
                     scratchGainNodeRef.current = gainNode;
-                    isAudioInitializedRef.current = true;
-                } catch (e) { console.error("Audio init error", e); }
+                    return ctx;
+                } catch (e) {
+                    console.error("Audio init error", e);
+                    return null;
+                }
             }, []);
 
-            const unlockAudio = useCallback(() => {
-                if (!isAudioInitializedRef.current) initAudio();
-                if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
-            }, [initAudio]);
-
             const playWinSound = useCallback(() => {
-                if (isMuted || !audioCtxRef.current) return;
-                const ctx = audioCtxRef.current;
+                if (isMuted) return;
+                const ctx = ensureAudioContext(); // 確保 Context 活著
+                if (!ctx) return;
+
                 const playTone = (freq, start, dur) => {
                     const osc = ctx.createOscillator();
                     const gain = ctx.createGain();
@@ -264,12 +276,18 @@
                 const now = ctx.currentTime;
                 playTone(523.25, now, 0.2); playTone(659.25, now+0.1, 0.2); 
                 playTone(783.99, now+0.2, 0.2); playTone(1046.50, now+0.3, 0.6);
-            }, [isMuted]);
+            }, [isMuted, ensureAudioContext]);
 
             const toggleScratchSound = useCallback((playing) => {
-                if (isMuted || !scratchGainNodeRef.current) return;
+                if (isMuted) return;
+                // 如果要播放，先確保引擎活著
+                if (playing) ensureAudioContext();
+                
+                if (!scratchGainNodeRef.current || !audioCtxRef.current) return;
+
                 const gain = scratchGainNodeRef.current.gain;
                 const now = audioCtxRef.current.currentTime;
+                
                 if (playing && !isScratchingRef.current) {
                     gain.cancelScheduledValues(now);
                     gain.linearRampToValueAtTime(0.2, now + 0.1);
@@ -279,14 +297,13 @@
                     gain.linearRampToValueAtTime(0, now + 0.1);
                     isScratchingRef.current = false;
                 }
-            }, [isMuted]);
+            }, [isMuted, ensureAudioContext]);
 
             const calculatePrize = (currentPrizes) => {
                 let pool = [];
 
                 if (mode === 'simulation') {
                     // 模擬模式：特定大獎機率各 5%，其餘平分剩餘機率
-                    // ID對應: 1:電動牙刷, 2:保溫杯, 3:行動電源, 4:筋膜槍
                     const targetIds = [1, 2, 3, 4]; 
                     const targetProb = 5; // 5%
                     
@@ -330,10 +347,11 @@
                 startNewGame();
             }, [mode]);
 
+            // 組件卸載時嘗試關閉 Context (避免記憶體洩漏，但在 SPA 中通常不觸發)
             useEffect(() => {
                 return () => { 
                     if(audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-                        audioCtxRef.current.close(); 
+                        audioCtxRef.current.close().catch(() => {}); 
                     }
                 };
             }, []);
@@ -341,19 +359,16 @@
             const handleScratchComplete = () => {
                 toggleScratchSound(false);
                 
-                // 1. 扣除庫存 (僅正式模式)
                 if (mode === 'official' && currentResult && currentResult.id > 0) {
                     setPrizes(prev => prev.map(p => p.id === currentResult.id ? { ...p, count: p.count - 1 } : p));
                 }
 
-                // 2. 觸發彩帶
                 confetti({
                     particleCount: 150,
                     spread: 70,
                     origin: { y: 0.6 }
                 });
                 
-                // 3. 傳送數據到 Google Sheets
                 sendToGoogleSheets(mode, currentResult);
 
                 setTimeout(() => { setShowResultModal(true); playWinSound(); }, 500);
@@ -381,14 +396,17 @@
                     }, 180000); // 3分鐘
                 };
                 const events = ['mousemove', 'mousedown', 'touchstart', 'click', 'keydown'];
-                const handler = () => { resetTimer(); unlockAudio(); };
+                const handler = () => { 
+                    resetTimer(); 
+                    // 這裡不需每次都 unlockAudio，避免頻繁 resume 造成問題，改在 touchstart 處理
+                };
                 events.forEach(e => window.addEventListener(e, handler));
                 resetTimer();
                 return () => {
                     clearTimeout(timeoutId);
                     events.forEach(e => window.removeEventListener(e, handler));
                 };
-            }, [startNewGame, unlockAudio, mode]);
+            }, [startNewGame, mode]);
 
             // Handlers for PinPad
             const openUnlockModal = () => {
