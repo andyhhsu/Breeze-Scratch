@@ -64,6 +64,11 @@
     <script type="text/babel">
         const { useState, useEffect, useRef, useCallback } = React;
 
+        // ==========================================
+        //  Google Apps Script URL (已更新)
+        // ==========================================
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbziifJpiWh5YeffZOMUs58QXr9NWQpG6AjEErtjUHR5o5RjIwEvVgkFXh3Y2-LO_Vfg/exec";
+
         // --- 圖示組件 ---
         const Icons = {
             Settings: ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
@@ -77,7 +82,7 @@
             Back: ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
         };
 
-        const STORAGE_KEY = 'samsung_cny_prizes_v2'; // 資料持久化 Key
+        const STORAGE_KEY = 'samsung_cny_prizes_v2';
 
         const DEFAULT_PRIZES = [
           { id: 1, name: 'ITFIT電動牙刷', count: 5, probability: 0, type: 'grand', icon: '🪥' },
@@ -173,6 +178,32 @@
             useEffect(() => {
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(prizes));
             }, [prizes]);
+
+            // --- Google Sheets Tracking API ---
+            const sendToGoogleSheets = async (trackingMode, prize) => {
+                if (!GOOGLE_SCRIPT_URL) return;
+                
+                try {
+                    const data = {
+                        mode: trackingMode,
+                        prizeName: prize.name,
+                        prizeId: prize.id
+                    };
+                    
+                    // 使用 no-cors 模式發送
+                    await fetch(GOOGLE_SCRIPT_URL, {
+                        method: 'POST',
+                        mode: 'no-cors', 
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(data)
+                    });
+                    console.log("Data sent to Google Sheets (no-cors mode)");
+                } catch (error) {
+                    console.error("Failed to send data to Google Sheets:", error);
+                }
+            };
 
             // Audio Logic
             const audioCtxRef = useRef(null);
@@ -286,20 +317,25 @@
 
             const handleScratchComplete = () => {
                 toggleScratchSound(false);
+                
+                // 1. 扣除庫存 (僅正式模式)
                 if (mode === 'official' && currentResult && currentResult.id > 0) {
                     setPrizes(prev => prev.map(p => p.id === currentResult.id ? { ...p, count: p.count - 1 } : p));
                 }
-                // 觸發彩帶
+
+                // 2. 觸發彩帶
                 confetti({
                     particleCount: 150,
                     spread: 70,
                     origin: { y: 0.6 }
                 });
                 
+                // 3. 傳送數據到 Google Sheets
+                sendToGoogleSheets(mode, currentResult);
+
                 setTimeout(() => { setShowResultModal(true); playWinSound(); }, 500);
             };
 
-            // 關閉視窗邏輯
             const handleModalClose = () => {
                 if (mode === 'official') {
                     setMode('simulation');
@@ -308,7 +344,7 @@
                 }
             };
 
-            // 閒置自動重置
+            // Idle Timer
             useEffect(() => {
                 let timeoutId;
                 const resetTimer = () => {
