@@ -5,7 +5,7 @@ import { Settings, X, RefreshCcw, Save, Info, Volume2, VolumeX } from 'lucide-re
  * 門市活動設定：
  * - 修正：活動名稱改為 Galaxy 「馬」上有禮
  * - 修正：移除銀漆層上的 SAMSUNG 字樣
- * - 音效：Web Audio API 合成音效
+ * - 音效：Web Audio API 合成音效 (改為 Lazy Init 懶加載模式，修復自動播放錯誤)
  * - 閒置 180 秒自動重置
  */
 
@@ -31,66 +31,72 @@ const App = () => {
   const audioCtxRef = useRef(null);
   const scratchGainNodeRef = useRef(null);
   const isScratchingRef = useRef(false);
+  const isAudioInitializedRef = useRef(false);
 
-  // 初始化音效引擎 (Web Audio API)
-  useEffect(() => {
-    // 建立 AudioContext (但瀏覽器通常需要使用者互動後才能 resume)
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (AudioContext) {
-      audioCtxRef.current = new AudioContext();
-      
+  // 初始化音效引擎 (Lazy Init: 只在使用者互動後執行)
+  const initAudio = useCallback(() => {
+    if (isAudioInitializedRef.current) return;
+    if (typeof window === 'undefined') return;
+
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+
+      const ctx = new AudioContext();
+      audioCtxRef.current = ctx;
+
       // 建立刮刮聲的噪音產生器 (White Noise)
-      const bufferSize = 2 * audioCtxRef.current.sampleRate;
-      const noiseBuffer = audioCtxRef.current.createBuffer(1, bufferSize, audioCtxRef.current.sampleRate);
+      const bufferSize = 2 * ctx.sampleRate;
+      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
       const output = noiseBuffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) {
-        // 產生白噪音，並稍微過濾讓聲音像沙紙
         output[i] = (Math.random() * 2 - 1) * 0.5;
       }
 
-      // 建立來源節點
-      const whiteNoiseSource = audioCtxRef.current.createBufferSource();
+      const whiteNoiseSource = ctx.createBufferSource();
       whiteNoiseSource.buffer = noiseBuffer;
       whiteNoiseSource.loop = true;
       
-      // 建立音量控制節點 (GainNode) - 預設音量為 0 (靜音)
-      const gainNode = audioCtxRef.current.createGain();
-      gainNode.gain.value = 0;
+      const gainNode = ctx.createGain();
+      gainNode.gain.value = 0; // 預設靜音
       
-      // 建立濾波器 (讓聲音悶一點，比較像刮紙聲)
-      const filter = audioCtxRef.current.createBiquadFilter();
+      const filter = ctx.createBiquadFilter();
       filter.type = 'bandpass';
       filter.frequency.value = 1000;
 
-      // 連接線路：Source -> Filter -> Gain -> Destination
       whiteNoiseSource.connect(filter);
       filter.connect(gainNode);
-      gainNode.connect(audioCtxRef.current.destination);
+      gainNode.connect(ctx.destination);
       
       whiteNoiseSource.start();
       scratchGainNodeRef.current = gainNode;
+      isAudioInitializedRef.current = true;
+      
+    } catch (e) {
+      console.error("Audio init failed:", e);
     }
-
-    return () => {
-      if (audioCtxRef.current) {
-        audioCtxRef.current.close();
-      }
-    };
   }, []);
 
   // 嘗試解鎖音效 (在使用者第一次互動時呼叫)
   const unlockAudio = useCallback(() => {
-    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
-      audioCtxRef.current.resume();
+    // 1. 如果還沒初始化，先初始化
+    if (!isAudioInitializedRef.current) {
+      initAudio();
     }
-  }, []);
+    // 2. 如果已經初始化但被暫停 (Suspended)，則恢復
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume().catch(e => console.log("Audio resume failed:", e));
+    }
+  }, [initAudio]);
 
   // 播放合成的中獎音效 (三連音)
   const playWinSound = useCallback(() => {
-    if (isMuted || !audioCtxRef.current) return;
+    if (isMuted) return;
+    // 確保音效已初始化
+    if (!audioCtxRef.current) initAudio();
+    if (!audioCtxRef.current) return;
     
     const ctx = audioCtxRef.current;
-    const now = ctx.currentTime;
     
     // 簡單的和弦合成器
     const playTone = (freq, startTime, duration) => {
@@ -110,16 +116,20 @@ const App = () => {
       osc.stop(startTime + duration);
     };
 
+    const now = ctx.currentTime;
     // 播放 C Major Arpeggio (C5, E5, G5, C6)
     playTone(523.25, now, 0.2);       // Do
     playTone(659.25, now + 0.1, 0.2); // Mi
     playTone(783.99, now + 0.2, 0.2); // Sol
     playTone(1046.50, now + 0.3, 0.6);// Do (高音)
-  }, [isMuted]);
+  }, [isMuted, initAudio]);
 
   // 控制刮刮聲 (透過調整 GainNode 的音量)
   const toggleScratchSound = useCallback((playing) => {
-    if (!scratchGainNodeRef.current || isMuted) return;
+    if (isMuted) return;
+    // 如果還沒初始化，嘗試初始化 (通常這時候使用者已經在觸控了)
+    if (!scratchGainNodeRef.current) initAudio();
+    if (!scratchGainNodeRef.current || !audioCtxRef.current) return;
     
     const gain = scratchGainNodeRef.current.gain;
     const now = audioCtxRef.current.currentTime;
@@ -139,7 +149,7 @@ const App = () => {
             isScratchingRef.current = false;
         }
     }
-  }, [isMuted]);
+  }, [isMuted, initAudio]);
 
   // 權重隨機抽獎邏輯
   const calculatePrize = (currentPrizes) => {
@@ -173,6 +183,13 @@ const App = () => {
   // 首次加載
   useEffect(() => {
     setCurrentResult(calculatePrize(DEFAULT_PRIZES));
+    // 清理函數：組件卸載時關閉 AudioContext
+    return () => {
+       if (audioCtxRef.current) {
+         audioCtxRef.current.close().catch(e => console.log("Audio close error", e));
+         isAudioInitializedRef.current = false;
+       }
+    };
   }, []);
 
   // 當刮刮樂完成時觸發
