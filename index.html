@@ -1,315 +1,643 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 美食探險家</title>
-    <!-- 載入 Tailwind CSS 框架 -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 載入 Google Fonts 的 Inter 和 Noto Sans TC 字體 -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
-    <style>
-        /* 設定網頁預設字體 */
-        body {
-            font-family: 'Inter', 'Noto Sans TC', sans-serif;
-        }
-        /* 增加一個簡單的載入中動畫 */
-        .loader {
-            border: 4px solid #f3f3f3; /* Light grey */
-            border-top: 4px solid #6366f1; /* Indigo */
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-    </style>
-</head>
-<body class="bg-gray-100 text-gray-800 min-h-screen flex flex-col items-center p-4 sm:p-8">
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Settings, X, RefreshCcw, Save, Info, Volume2, VolumeX } from 'lucide-react';
 
-    <!-- 主要容器 -->
-    <div class="w-full max-w-5xl mx-auto">
+/**
+ * 門市活動設定：
+ * - 修正：活動名稱改為 Galaxy 「馬」上有禮
+ * - 修正：移除銀漆層上的 SAMSUNG 字樣
+ * - 音效：Web Audio API 合成音效
+ * - 閒置 180 秒自動重置
+ */
+
+// 預設獎品資料
+const DEFAULT_PRIZES = [
+  { id: 1, name: 'Galaxy S24 Ultra (體驗券)', count: 5, probability: 5, type: 'grand', icon: '📱' },
+  { id: 2, name: 'Galaxy Buds2 Pro (體驗券)', count: 20, probability: 15, type: 'major', icon: '🎧' },
+  { id: 3, name: '三星新春紅包袋', count: 100, probability: 30, type: 'normal', icon: '🧧' },
+  { id: 4, name: '門市限定精美小禮', count: 999, probability: 50, type: 'normal', icon: '🎁' },
+];
+
+const App = () => {
+  const [view, setView] = useState('game'); // 'game', 'admin'
+  const [prizes, setPrizes] = useState(DEFAULT_PRIZES);
+  
+  const [currentResult, setCurrentResult] = useState(null);
+  
+  const [showResultModal, setShowResultModal] = useState(false);
+  const [resetKey, setResetKey] = useState(0); 
+  const [isMuted, setIsMuted] = useState(false);
+
+  // --- Web Audio API Refs ---
+  const audioCtxRef = useRef(null);
+  const scratchGainNodeRef = useRef(null);
+  const isScratchingRef = useRef(false);
+
+  // 初始化音效引擎 (Web Audio API)
+  useEffect(() => {
+    // 建立 AudioContext (但瀏覽器通常需要使用者互動後才能 resume)
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (AudioContext) {
+      audioCtxRef.current = new AudioContext();
+      
+      // 建立刮刮聲的噪音產生器 (White Noise)
+      const bufferSize = 2 * audioCtxRef.current.sampleRate;
+      const noiseBuffer = audioCtxRef.current.createBuffer(1, bufferSize, audioCtxRef.current.sampleRate);
+      const output = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        // 產生白噪音，並稍微過濾讓聲音像沙紙
+        output[i] = (Math.random() * 2 - 1) * 0.5;
+      }
+
+      // 建立來源節點
+      const whiteNoiseSource = audioCtxRef.current.createBufferSource();
+      whiteNoiseSource.buffer = noiseBuffer;
+      whiteNoiseSource.loop = true;
+      
+      // 建立音量控制節點 (GainNode) - 預設音量為 0 (靜音)
+      const gainNode = audioCtxRef.current.createGain();
+      gainNode.gain.value = 0;
+      
+      // 建立濾波器 (讓聲音悶一點，比較像刮紙聲)
+      const filter = audioCtxRef.current.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1000;
+
+      // 連接線路：Source -> Filter -> Gain -> Destination
+      whiteNoiseSource.connect(filter);
+      filter.connect(gainNode);
+      gainNode.connect(audioCtxRef.current.destination);
+      
+      whiteNoiseSource.start();
+      scratchGainNodeRef.current = gainNode;
+    }
+
+    return () => {
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close();
+      }
+    };
+  }, []);
+
+  // 嘗試解鎖音效 (在使用者第一次互動時呼叫)
+  const unlockAudio = useCallback(() => {
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume();
+    }
+  }, []);
+
+  // 播放合成的中獎音效 (三連音)
+  const playWinSound = useCallback(() => {
+    if (isMuted || !audioCtxRef.current) return;
+    
+    const ctx = audioCtxRef.current;
+    const now = ctx.currentTime;
+    
+    // 簡單的和弦合成器
+    const playTone = (freq, startTime, duration) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      
+      gain.gain.setValueAtTime(0.1, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+      
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      osc.start(startTime);
+      osc.stop(startTime + duration);
+    };
+
+    // 播放 C Major Arpeggio (C5, E5, G5, C6)
+    playTone(523.25, now, 0.2);       // Do
+    playTone(659.25, now + 0.1, 0.2); // Mi
+    playTone(783.99, now + 0.2, 0.2); // Sol
+    playTone(1046.50, now + 0.3, 0.6);// Do (高音)
+  }, [isMuted]);
+
+  // 控制刮刮聲 (透過調整 GainNode 的音量)
+  const toggleScratchSound = useCallback((playing) => {
+    if (!scratchGainNodeRef.current || isMuted) return;
+    
+    const gain = scratchGainNodeRef.current.gain;
+    const now = audioCtxRef.current.currentTime;
+    
+    if (playing) {
+        if (!isScratchingRef.current) {
+            // 淡入音效
+            gain.cancelScheduledValues(now);
+            gain.linearRampToValueAtTime(0.3, now + 0.05);
+            isScratchingRef.current = true;
+        }
+    } else {
+        if (isScratchingRef.current) {
+            // 淡出音效
+            gain.cancelScheduledValues(now);
+            gain.linearRampToValueAtTime(0, now + 0.05);
+            isScratchingRef.current = false;
+        }
+    }
+  }, [isMuted]);
+
+  // 權重隨機抽獎邏輯
+  const calculatePrize = (currentPrizes) => {
+    const availablePrizes = currentPrizes.filter(p => p.count > 0);
+    
+    if (availablePrizes.length === 0) {
+      return { id: -1, name: '下次好運！', icon: '🐎', type: 'none' };
+    }
+
+    const totalWeight = availablePrizes.reduce((sum, p) => sum + parseInt(p.probability), 0);
+    let random = Math.random() * totalWeight;
+
+    for (const prize of availablePrizes) {
+      if (random < prize.probability) {
+        return prize;
+      }
+      random -= prize.probability;
+    }
+    return availablePrizes[availablePrizes.length - 1];
+  };
+
+  // 啟動新遊戲
+  const startNewGame = useCallback(() => {
+    const newPrize = calculatePrize(prizes);
+    setCurrentResult(newPrize);
+    setResetKey(prev => prev + 1);
+    setShowResultModal(false);
+    toggleScratchSound(false);
+  }, [prizes, toggleScratchSound]);
+
+  // 首次加載
+  useEffect(() => {
+    setCurrentResult(calculatePrize(DEFAULT_PRIZES));
+  }, []);
+
+  // 當刮刮樂完成時觸發
+  const handleScratchComplete = () => {
+    toggleScratchSound(false);
+
+    if (currentResult && currentResult.id !== -1) {
+      setPrizes(prev => prev.map(p => 
+        p.id === currentResult.id ? { ...p, count: p.count - 1 } : p
+      ));
+    }
+
+    setTimeout(() => {
+      setShowResultModal(true);
+      playWinSound(); 
+    }, 500);
+  };
+
+  // --- 閒置自動重置邏輯 ---
+  useEffect(() => {
+    let timeoutId;
+    const IDLE_TIMEOUT = 180 * 1000; 
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        console.log('User is idle, resetting game...');
+        startNewGame();
+      }, IDLE_TIMEOUT);
+    };
+
+    const handleInteraction = () => {
+        resetTimer();
+        unlockAudio(); // 確保有互動時解鎖音效
+    };
+
+    window.addEventListener('mousemove', handleInteraction);
+    window.addEventListener('mousedown', handleInteraction);
+    window.addEventListener('touchstart', handleInteraction);
+    window.addEventListener('click', handleInteraction);
+    window.addEventListener('keydown', handleInteraction);
+
+    resetTimer();
+
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('mousemove', handleInteraction);
+      window.removeEventListener('mousedown', handleInteraction);
+      window.removeEventListener('touchstart', handleInteraction);
+      window.removeEventListener('click', handleInteraction);
+      window.removeEventListener('keydown', handleInteraction);
+    };
+  }, [startNewGame, unlockAudio]);
+
+  return (
+    <div className="min-h-screen bg-red-900 font-sans overflow-hidden relative selection:bg-yellow-500 selection:text-red-900">
+      {/* 背景裝飾 */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-20 -left-20 w-64 h-64 bg-yellow-500 rounded-full blur-[100px] opacity-20 animate-pulse"></div>
+        <div className="absolute top-1/2 -right-20 w-80 h-80 bg-red-500 rounded-full blur-[120px] opacity-30"></div>
+        <div className="absolute bottom-0 left-1/3 w-full h-32 bg-gradient-to-t from-red-950 to-transparent opacity-80"></div>
         
-        <!-- 標題區 -->
-        <header class="text-center mb-10">
-            <h1 class="text-4xl sm:text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-500 to-indigo-600">
-                美食探險家
-            </h1>
-            <p class="text-gray-500 mt-2">為您即時搜尋附近的高分好評店家！</p>
-        </header>
+        <style>{`
+          @keyframes float {
+            0% { transform: translateY(0px) rotate(0deg); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translateY(100vh) rotate(360deg); opacity: 0; }
+          }
+          .particle {
+            position: absolute;
+            top: -10px;
+            color: #FFD700;
+            font-size: 1.5rem;
+            animation: float 10s linear infinite;
+          }
+        `}</style>
+        {[...Array(10)].map((_, i) => (
+          <div key={i} className="particle" style={{
+            left: `${Math.random() * 100}%`,
+            animationDelay: `${Math.random() * 5}s`,
+            fontSize: `${Math.random() * 20 + 10}px`
+          }}>✨</div>
+        ))}
+      </div>
 
-        <!-- 搜尋表單區 -->
-        <div class="bg-white p-6 rounded-xl shadow-lg mb-12">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- 地區選單 (已擴充) -->
-                <div>
-                    <label for="area-select" class="block text-sm font-medium text-gray-600 mb-2">選擇地區</label>
-                    <select id="area-select" class="w-full bg-gray-100 border-gray-300 border rounded-md py-3 px-4 text-gray-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
-                        <option value="台北市信義區">台北市 信義區</option>
-                        <option value="台北市大安區">台北市 大安區</option>
-                        <option value="台北市中山區">台北市 中山區</option>
-                        <option value="台北市松山區">台北市 松山區</option>
-                        <option value="台北市中正區">台北市 中正區</option>
-                        <option value="台北市萬華區">台北市 萬華區</option>
-                        <option value="台北市內湖區">台北市 內湖區</option>
-                        <option value="台北市士林區">台北市 士林區</option>
-                        <option value="台北市大同區">台北市 大同區</option>
-                        <option value="台北市文山區">台北市 文山區</option>
-                        <option value="新北市板橋區">新北市 板橋區</option>
-                        <option value="新北市中和區">新北市 中和區</option>
-                        <option value="新北市永和區">新北市 永和區</option>
-                        <option value="新北市新莊區">新北市 新莊區</option>
-                        <option value="新北市新店區">新北市 新店區</option>
-                        <option value="新北市三重區">新北市 三重區</option>
-                    </select>
-                </div>
-                <!-- 美食種類選單 (已擴充) -->
-                <div>
-                    <label for="cuisine-select" class="block text-sm font-medium text-gray-600 mb-2">選擇美食種類</label>
-                    <select id="cuisine-select" class="w-full bg-gray-100 border-gray-300 border rounded-md py-3 px-4 text-gray-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
-                        <option value="牛肉麵">牛肉麵</option>
-                        <option value="火鍋">火鍋</option>
-                        <option value="日式料理">日式料理</option>
-                        <option value="韓式料理">韓式料理</option>
-                        <option value="義大利麵">義大利麵</option>
-                        <option value="美式漢堡">美式漢堡</option>
-                        <option value="泰式料理">泰式料理</option>
-                        <option value="咖啡廳">咖啡廳</option>
-                        <option value="早午餐">早午餐</option>
-                        <option value="小吃">小吃</option>
-                        <option value="甜點">甜點</option>
-                        <option value="麵包店">麵包店</option>
-                        <option value="素食">素食</option>
-                    </select>
-                </div>
+      {/* 右下角工具列：靜音 + 設定 */}
+      <div className="absolute bottom-4 right-4 z-50 flex gap-2">
+        <button 
+          onClick={() => setIsMuted(!isMuted)}
+          className="p-2 text-white/40 hover:text-white/80 transition-colors bg-black/20 rounded-full backdrop-blur-sm"
+          title={isMuted ? "開啟聲音" : "靜音"}
+        >
+          {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
+        </button>
+        <button 
+          onClick={() => setView('admin')}
+          className="p-2 text-white/20 hover:text-white/80 transition-colors"
+        >
+          <Settings size={24} />
+        </button>
+      </div>
+
+      {/* 主要內容切換 */}
+      {view === 'game' ? (
+        <GameInterface 
+          result={currentResult} 
+          onComplete={handleScratchComplete} 
+          resetKey={resetKey}
+          onScratchStart={() => toggleScratchSound(true)}
+          onScratchEnd={() => toggleScratchSound(false)}
+        />
+      ) : (
+        <AdminPanel 
+          prizes={prizes} 
+          setPrizes={setPrizes} 
+          onClose={() => setView('game')} 
+        />
+      )}
+
+      {/* 中獎/結果彈窗 */}
+      {showResultModal && (
+        <ResultModal 
+          result={currentResult} 
+          onClose={startNewGame} // 改為呼叫 startNewGame 來完全重置
+        />
+      )}
+    </div>
+  );
+};
+
+/**
+ * 遊戲主介面
+ */
+const GameInterface = ({ result, onComplete, resetKey, onScratchStart, onScratchEnd }) => {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen px-4 z-10 relative">
+      <header className="absolute top-8 w-full text-center">
+        <h2 className="text-yellow-400 font-bold tracking-widest text-lg md:text-xl uppercase drop-shadow-md mb-1">
+          三星旗艦體驗館-微風南山
+        </h2>
+        <h1 className="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-200 to-yellow-600 drop-shadow-lg filter">
+          Galaxy 「馬」上有禮
+        </h1>
+        <p className="text-white/80 mt-2 text-sm md:text-base font-medium tracking-wide">
+          加入門市LINE@即可參加乙次
+        </p>
+      </header>
+
+      <div className="mt-12 relative group">
+        <div className="absolute -inset-1 bg-gradient-to-r from-yellow-600 via-yellow-300 to-yellow-600 rounded-xl blur opacity-75 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 animate-tilt"></div>
+        
+        <div className="relative w-[320px] h-[320px] md:w-[500px] md:h-[400px] bg-white rounded-xl shadow-2xl overflow-hidden border-4 border-yellow-600">
+          
+          {/* 底層：中獎結果 - 這裡顯示的 result 是被鎖定的，不會因為庫存更新而改變 */}
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-50 pattern-grid-lg text-center p-6">
+            <div className="animate-bounce mb-4 text-6xl md:text-8xl filter drop-shadow-lg">
+              {result?.icon || '🎁'}
             </div>
-            <!-- 功能優化：僅顯示營業中選項 -->
-            <div class="mt-4 flex items-center justify-center">
-                <input id="open-now-checkbox" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                <label for="open-now-checkbox" class="ml-2 block text-sm text-gray-700 select-none">僅顯示目前營業中店家</label>
-            </div>
-             <!-- 搜尋按鈕 (預設為禁用狀態) -->
-            <button id="search-button" class="mt-5 w-full bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-all flex items-center justify-center opacity-50 cursor-not-allowed" disabled>
-                <span id="button-text">等待地圖服務...</span>
-                <div id="button-loader" class="loader hidden"></div>
-            </button>
+            <h3 className="text-xl md:text-3xl font-bold text-red-800 mb-2">
+              恭喜獲得
+            </h3>
+            <p className="text-2xl md:text-4xl font-black text-red-600 leading-tight">
+              {result?.name || '神秘好禮'}
+            </p>
+          </div>
+
+          {/* 頂層：Canvas 塗層 */}
+          <ScratchCanvas 
+            width={500}
+            height={400} 
+            onComplete={onComplete}
+            resetKey={resetKey}
+            onScratchStart={onScratchStart}
+            onScratchEnd={onScratchEnd}
+          />
+        </div>
+      </div>
+
+      <div className="mt-8 text-yellow-200/80 text-sm animate-pulse">
+        👆 請用手指在上方區域刮開銀漆
+      </div>
+    </div>
+  );
+};
+
+/**
+ * 刮刮卡 Canvas 元件
+ */
+const ScratchCanvas = ({ width, height, onComplete, resetKey, onScratchStart, onScratchEnd }) => {
+  const canvasRef = useRef(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [completed, setCompleted] = useState(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    
+    // 重置狀態
+    canvas.style.transition = 'none';
+    canvas.style.opacity = '1';
+    
+    setCompleted(false);
+    canvas.width = width;
+    canvas.height = height;
+
+    // 繪製銀漆
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#CCCCCC';
+    ctx.fillRect(0, 0, width, height);
+
+    // 雜訊
+    for(let i=0; i<3000; i++) {
+        ctx.fillStyle = Math.random() > 0.5 ? '#AAAAAA' : '#DDDDDD';
+        ctx.fillRect(Math.random() * width, Math.random() * height, 2, 2);
+    }
+
+    // 文字
+    ctx.font = 'bold 36px sans-serif';
+    ctx.fillStyle = '#666666';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // ctx.fillText('SAMSUNG', width / 2, height / 2 - 30); // 移除這行
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText('刮開立即中獎', width / 2, height / 2); // 置中顯示
+
+    // 邊框
+    ctx.strokeStyle = '#B8860B';
+    ctx.lineWidth = 10;
+    ctx.strokeRect(0, 0, width, height);
+
+  }, [resetKey, width, height]);
+
+  const checkProgress = () => {
+    if (completed) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const pixels = imageData.data;
+    let transparentCount = 0;
+    
+    for (let i = 0; i < pixels.length; i += 40) {
+      if (pixels[i + 3] < 128) transparentCount++;
+    }
+
+    const totalPixelsToCheck = pixels.length / 40;
+    const percentage = (transparentCount / totalPixelsToCheck) * 100;
+
+    if (percentage > 45) {
+      setCompleted(true);
+      canvas.style.transition = 'opacity 1s';
+      canvas.style.opacity = '0';
+      onComplete();
+    }
+  };
+
+  const getPosition = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    let clientX, clientY;
+    if (e.touches && e.touches[0]) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
+    const scaleX = width / rect.width;
+    const scaleY = height / rect.height;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+  };
+
+  const startDrawing = () => {
+    if (completed) return;
+    setIsDrawing(true);
+    onScratchStart(); 
+  };
+
+  const stopDrawing = () => {
+    setIsDrawing(false);
+    onScratchEnd(); 
+  };
+
+  const scratch = (e) => {
+    if (!isDrawing || completed) return;
+    e.preventDefault();
+
+    const pos = getPosition(e);
+    const ctx = canvasRef.current.getContext('2d');
+    
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, 30, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (Math.random() > 0.8) checkProgress();
+  };
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 w-full h-full cursor-pointer touch-none"
+      onMouseDown={startDrawing}
+      onMouseUp={stopDrawing}
+      onMouseLeave={stopDrawing}
+      onMouseMove={scratch}
+      onTouchStart={startDrawing}
+      onTouchEnd={stopDrawing}
+      onTouchMove={scratch}
+    />
+  );
+};
+
+/**
+ * 彈窗：結果展示與 QR Code 導流
+ */
+const ResultModal = ({ result, onClose }) => {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl transform transition-all animate-bounce-in relative">
+        <div className="bg-red-600 p-6 text-center relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/diagmonds-light.png')] opacity-20"></div>
+          <h2 className="text-2xl font-bold text-yellow-300 mb-1 relative z-10">🎉 恭喜您刮中 🎉</h2>
+          <div className="text-4xl relative z-10 mt-2">{result?.icon}</div>
         </div>
 
-        <!-- 結果顯示區 -->
-        <main id="results-container" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-            <!-- 搜尋結果將會動態插入到這裡 -->
-        </main>
+        <div className="p-8 text-center bg-gradient-to-b from-white to-red-50">
+          <h3 className="text-2xl font-black text-gray-800 mb-2">{result?.name}</h3>
+          
+          <div className="my-6 p-4 bg-yellow-50 border-2 border-dashed border-yellow-500 rounded-lg">
+            <p className="text-red-600 font-bold text-sm mb-2"> 👇 掃描加入官方帳號領獎 👇</p>
+            <div className="w-48 h-48 bg-white mx-auto p-2 shadow-sm rounded-lg flex items-center justify-center relative overflow-hidden">
+               <img 
+                 src="https://github.com/andyhhsu/breeze-Prize-Wheel/blob/main/LINE.png?raw=true" 
+                 alt="Line QR Code"
+                 className="w-full h-full object-contain"
+               />
+            </div>
+            <p className="text-xs text-gray-500 mt-2">請向門市人員出示加入畫面</p>
+          </div>
+
+          <button 
+            onClick={onClose}
+            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+          >
+            <RefreshCcw size={18} />
+            再玩一次 (給下一位)
+          </button>
+        </div>
+      </div>
+      
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes bounceIn { 
+          0% { opacity: 0; transform: scale(0.3); } 
+          50% { opacity: 1; transform: scale(1.05); } 
+          70% { transform: scale(0.9); }
+          100% { transform: scale(1); } 
+        }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        .animate-bounce-in { animation: bounceIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards; }
+      `}</style>
     </div>
+  );
+};
 
-    <!-- 
-        重要！載入 Google Maps JavaScript API 
-        已將您的 API 金鑰加入下方。
-    -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB-Ev8iMdRHstXwwFL2L6JpghYzgGsbiqY&libraries=places&callback=initMap&language=zh-TW" async defer></script>
-    
-    <script>
-        // 取得頁面上的元素
-        const searchButton = document.getElementById('search-button');
-        const areaSelect = document.getElementById('area-select');
-        const cuisineSelect = document.getElementById('cuisine-select');
-        const openNowCheckbox = document.getElementById('open-now-checkbox'); 
-        const resultsContainer = document.getElementById('results-container');
-        const buttonText = document.getElementById('button-text');
-        const buttonLoader = document.getElementById('button-loader');
+/**
+ * 後台管理面板
+ */
+const AdminPanel = ({ prizes, setPrizes, onClose }) => {
+  const handleChange = (id, field, value) => {
+    setPrizes(prizes.map(p => 
+      p.id === id ? { ...p, [field]: value } : p
+    ));
+  };
 
-        let placesService;
+  return (
+    <div className="absolute inset-0 bg-gray-100 z-50 flex flex-col p-4 md:p-8 overflow-y-auto text-gray-800">
+      <div className="flex justify-between items-center mb-6 max-w-4xl mx-auto w-full">
+        <h2 className="text-2xl font-bold flex items-center gap-2 text-gray-800">
+          <Settings className="text-red-600" /> 活動參數設定 (前端模擬)
+        </h2>
+        <button onClick={onClose} className="p-2 bg-gray-200 rounded-full hover:bg-gray-300">
+          <X size={24} />
+        </button>
+      </div>
 
-        // Google Maps API 載入完成後的回呼函式
-        function initMap() {
-            // 建立一個暫時的地圖物件來初始化 PlacesService
-            const map = new google.maps.Map(document.createElement('div'));
-            placesService = new google.maps.places.PlacesService(map);
-            console.log('Google Maps Places Service 已準備就緒！');
+      <div className="bg-white rounded-xl shadow-lg p-6 max-w-4xl mx-auto w-full">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b-2 border-gray-100">
+                <th className="p-3 text-sm font-semibold text-gray-600">圖示</th>
+                <th className="p-3 text-sm font-semibold text-gray-600">獎品名稱</th>
+                <th className="p-3 text-sm font-semibold text-gray-600">剩餘數量</th>
+                <th className="p-3 text-sm font-semibold text-gray-600">權重 (機率)</th>
+                <th className="p-3 text-sm font-semibold text-gray-600">類型</th>
+              </tr>
+            </thead>
+            <tbody>
+              {prizes.map((prize) => (
+                <tr key={prize.id} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="p-3 text-2xl">{prize.icon}</td>
+                  <td className="p-3">
+                    <input 
+                      type="text" 
+                      value={prize.name} 
+                      onChange={(e) => handleChange(prize.id, 'name', e.target.value)}
+                      className="w-full border rounded px-2 py-1 focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </td>
+                  <td className="p-3">
+                    <input 
+                      type="number" 
+                      value={prize.count} 
+                      onChange={(e) => handleChange(prize.id, 'count', parseInt(e.target.value) || 0)}
+                      className="w-24 border rounded px-2 py-1"
+                    />
+                  </td>
+                  <td className="p-3">
+                     <div className="flex items-center gap-2">
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="100" 
+                        value={prize.probability} 
+                        onChange={(e) => handleChange(prize.id, 'probability', parseInt(e.target.value))}
+                        className="w-24"
+                      />
+                      <span className="text-sm font-mono w-8 text-right">{prize.probability}</span>
+                     </div>
+                  </td>
+                  <td className="p-3">
+                    <span className={`text-xs px-2 py-1 rounded-full ${prize.type === 'grand' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'}`}>
+                      {prize.type}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-            // *** FIX: 啟用搜尋按鈕，因為服務已準備好 ***
-            searchButton.disabled = false;
-            searchButton.classList.remove('opacity-50', 'cursor-not-allowed');
-            buttonText.textContent = '開始搜尋';
-        }
+        <div className="mt-6 bg-blue-50 p-4 rounded-lg flex items-start gap-3">
+          <Info className="text-blue-600 shrink-0 mt-1" size={20} />
+          <div className="text-sm text-blue-800">
+            <p className="font-bold">說明：</p>
+            <ul className="list-disc pl-4 mt-1 space-y-1">
+              <li>此處設定為純前端模擬，重新整理網頁後會恢復預設值。</li>
+              <li>權重越高，被抽中的機率越大。若數量歸零，該獎項將不會被抽出。</li>
+              <li>現場人員可根據人流狀況，動態調整「大獎」的出現機率來控制預算或炒熱氣氛。</li>
+            </ul>
+          </div>
+        </div>
 
-        // *** NEW: 增加一個超時檢查，以防API載入失敗 ***
-        window.setTimeout(() => {
-            if (!placesService) {
-                console.error("Google Maps Service failed to load.");
-                resultsContainer.innerHTML = `<p class="text-red-500 col-span-full text-center">無法載入 Google Maps 服務。請檢查您的網路連線、API金鑰設定，或重新整理頁面。</p>`;
-                // 更新按鈕狀態以反映錯誤
-                buttonText.textContent = '地圖服務載入失敗';
-                searchButton.disabled = true;
-                 // 確保按鈕視覺上是錯誤狀態
-                searchButton.classList.add('bg-red-500', 'cursor-not-allowed');
-                searchButton.classList.remove('bg-gradient-to-r', 'from-purple-500', 'to-indigo-600');
-            }
-        }, 5000); // 5秒超時
+        <div className="mt-6 flex justify-end">
+          <button 
+            onClick={onClose}
+            className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg flex items-center gap-2 shadow-md"
+          >
+            <Save size={18} /> 保存並返回遊戲
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
-        // 搜尋按鈕的點擊事件監聽器
-        searchButton.addEventListener('click', (event) => {
-            event.preventDefault(); // 防止表單預設提交行為
-            searchRestaurants();
-        });
-
-        // 搜尋餐廳的主要函式
-        async function searchRestaurants() {
-            const area = areaSelect.value;
-            const cuisine = cuisineSelect.value;
-            const onlyOpen = openNowCheckbox.checked;
-
-            if (!placesService) {
-                // 這個情況現在比較不可能發生，但保留以防萬一
-                resultsContainer.innerHTML = `<p class="text-red-500 col-span-full text-center">Google Maps 服務尚未準備好，請稍後再試。</p>`;
-                return;
-            }
-
-            showLoading(true);
-            resultsContainer.innerHTML = `<div class="col-span-full text-center text-gray-500">正在努力搜尋中，請稍候...</div>`; 
-
-            const request = {
-                query: `${area} ${cuisine}`,
-                fields: ['place_id', 'name', 'rating', 'photos'],
-            };
-
-            placesService.textSearch(request, async (results, status) => {
-                if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-                    const highRatedResults = results.filter(place => place.rating >= 4.0 && place.photos && place.place_id);
-                    
-                    if(highRatedResults.length === 0) {
-                        resultsContainer.innerHTML = `<p class="text-gray-500 col-span-full text-center">找不到評分高於 4.0 的相關餐廳，請試試其他關鍵字。</p>`;
-                        showLoading(false);
-                        return;
-                    }
-                    
-                    const cardDataPromises = highRatedResults.map(place => processPlace(place, onlyOpen));
-                    const cardDataList = await Promise.all(cardDataPromises);
-                    
-                    resultsContainer.innerHTML = '';
-                    
-                    const validCards = cardDataList.filter(data => data !== null);
-                    
-                    validCards.sort((a, b) => {
-                        const reviewsB = b.user_ratings_total || 0;
-                        const reviewsA = a.user_ratings_total || 0;
-                        if (reviewsB !== reviewsA) {
-                            return reviewsB - reviewsA;
-                        }
-                        return (b.rating || 0) - (a.rating || 0);
-                    });
-
-                    if (validCards.length > 0) {
-                        validCards.forEach(data => {
-                            const card = createRestaurantCard(data);
-                            resultsContainer.appendChild(card);
-                        });
-                    } else {
-                        const message = onlyOpen ? "抱歉，目前找不到「營業中」且評分高於 4.0 的相關餐廳。" : "找不到任何相關餐廳。";
-                        resultsContainer.innerHTML = `<p class="text-gray-500 col-span-full text-center">${message}</p>`;
-                    }
-
-                } else {
-                    resultsContainer.innerHTML = `<p class="text-red-500 col-span-full text-center">搜尋時發生錯誤，請確認您的 API 金鑰是否正確、已啟用 Places API 並連結有效帳單。 錯誤訊息: ${status}</p>`;
-                }
-                showLoading(false);
-            });
-        }
-        
-        async function processPlace(place, onlyOpen) {
-            try {
-                const detailedPlace = await getPlaceDetails(place.place_id);
-                if (onlyOpen) {
-                    const isOpen = detailedPlace.opening_hours?.isOpen?.();
-                    if (isOpen === false) {
-                        console.log(`已過濾休息中店家: ${detailedPlace.name}`);
-                        return null; 
-                    }
-                }
-                return detailedPlace; 
-            } catch (error) {
-                console.error(`處理地點 ${place.name} 時發生錯誤:`, error);
-                return null; 
-            }
-        }
-
-        function getPlaceDetails(placeId) {
-            return new Promise((resolve, reject) => {
-                const request = {
-                    placeId: placeId,
-                    fields: ['name', 'rating', 'user_ratings_total', 'formatted_address', 'photos', 'place_id', 'opening_hours', 'url']
-                };
-                placesService.getDetails(request, (place, status) => {
-                    if (status === google.maps.places.PlacesServiceStatus.OK && place) {
-                        resolve(place);
-                    } else {
-                        reject(new Error(`無法獲取地點詳細資訊: ${status}`));
-                    }
-                });
-            });
-        }
-        
-        function createRestaurantCard(place) {
-            const card = document.createElement('div');
-            card.className = "bg-white rounded-2xl shadow-lg overflow-hidden transform hover:-translate-y-2 transition-transform duration-300 flex flex-col";
-            const photoUrl = place.photos?.[0]?.getUrl({ maxWidth: 400, maxHeight: 225 }) ?? 'https://placehold.co/400x225/e2e8f0/94a3b8?text=暫無圖片';
-            const ratingStars = '★'.repeat(Math.round(place.rating)) + '☆'.repeat(5 - Math.round(place.rating));
-            const mapsUrl = place.url || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name)}&query_place_id=${place.place_id}`;
-            let hoursInfo = `<p class="text-sm text-gray-500">未提供營業時間資訊</p>`;
-            if (place.opening_hours) {
-                const isOpen = place.opening_hours.isOpen?.();
-                let statusText = '';
-                if (isOpen !== null && typeof isOpen !== 'undefined') {
-                    const statusClass = isOpen ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
-                    statusText = `<span class="${statusClass}">${isOpen ? '營業中' : '休息中'}</span>`;
-                }
-
-                const weekdayText = place.opening_hours.weekday_text;
-                let todayHours = '';
-                if (weekdayText && weekdayText.length > 0) {
-                    const googleDayIndex = (new Date().getDay() + 6) % 7; 
-                    todayHours = weekdayText[googleDayIndex];
-                    todayHours = todayHours.substring(todayHours.indexOf(':') + 2);
-                }
-                hoursInfo = `<p class="text-sm">${statusText} <span class="text-gray-600">${statusText ? ' • ' : ''} ${todayHours || ''}</span></p>`;
-            }
-
-            card.innerHTML = `
-                <a href="${mapsUrl}" target="_blank" rel="noopener noreferrer" class="block">
-                    <img src="${photoUrl}" alt="${place.name}" class="w-full h-48 object-cover" onerror="this.onerror=null;this.src='https://placehold.co/400x225/e2e8f0/94a3b8?text=圖片載入失敗';">
-                </a>
-                <div class="p-5 flex flex-col flex-grow">
-                    <h2 class="text-xl font-bold mb-2 text-gray-900">${place.name}</h2>
-                    <div class="flex items-center mb-4">
-                        <span class="text-yellow-500 mr-2" aria-label="評分">${ratingStars}</span>
-                        <span class="text-gray-500 text-sm">${place.rating} (${place.user_ratings_total || 0} 則評論)</span>
-                    </div>
-                    <div class="space-y-3 text-sm mb-4 flex-grow">
-                         <div class="flex items-start">
-                            <svg class="w-5 h-5 mr-2 mt-0.5 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                            <p class="text-gray-600">${place.formatted_address || '未提供地址'}</p>
-                        </div>
-                        <div class="flex items-start">
-                            <svg class="w-5 h-5 mr-2 mt-0.5 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                            ${hoursInfo}
-                        </div>
-                    </div>
-                </div>
-            `;
-            return card;
-        }
-
-        function showLoading(isLoading) {
-            buttonText.classList.toggle('hidden', isLoading);
-            buttonLoader.classList.toggle('hidden', !isLoading);
-            searchButton.disabled = isLoading;
-            searchButton.classList.toggle('opacity-75', isLoading);
-        }
-
-    </script>
-</body>
-</html>
+export default App;
