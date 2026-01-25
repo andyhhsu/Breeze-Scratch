@@ -282,18 +282,41 @@
             }, [isMuted]);
 
             const calculatePrize = (currentPrizes) => {
-                let availablePrizes = (mode === 'simulation') 
-                    ? currentPrizes.filter(p => p.probability > 0)
-                    : currentPrizes.filter(p => p.count > 0 && p.probability > 0);
+                let pool = [];
 
-                if (availablePrizes.length === 0) return { id: -1, name: '下次好運！', icon: '🐎', type: 'none' };
-                const totalWeight = availablePrizes.reduce((sum, p) => sum + parseFloat(p.probability), 0);
+                if (mode === 'simulation') {
+                    // 模擬模式：特定大獎機率各 5%，其餘平分剩餘機率
+                    // ID對應: 1:電動牙刷, 2:保溫杯, 3:行動電源, 4:筋膜槍
+                    const targetIds = [1, 2, 3, 4]; 
+                    const targetProb = 5; // 5%
+                    
+                    const otherPrizes = currentPrizes.filter(p => !targetIds.includes(p.id));
+                    const totalTargetProb = targetIds.length * targetProb; // 20%
+                    const remainingProb = 100 - totalTargetProb; // 80%
+                    const otherProb = otherPrizes.length > 0 ? remainingProb / otherPrizes.length : 0;
+
+                    pool = currentPrizes.map(p => {
+                        if (targetIds.includes(p.id)) {
+                            return { ...p, probability: targetProb };
+                        } else {
+                            return { ...p, probability: otherProb };
+                        }
+                    });
+                } else {
+                    // 正式模式：依據後台設定的機率與庫存
+                    pool = currentPrizes.filter(p => p.count > 0 && p.probability > 0);
+                }
+
+                if (pool.length === 0) return { id: -1, name: '下次好運！', icon: '🐎', type: 'none' };
+
+                const totalWeight = pool.reduce((sum, p) => sum + parseFloat(p.probability), 0);
                 let random = Math.random() * totalWeight;
-                for (const prize of availablePrizes) {
+
+                for (const prize of pool) {
                     if (random < prize.probability) return prize;
                     random -= prize.probability;
                 }
-                return availablePrizes[availablePrizes.length - 1];
+                return pool[pool.length - 1];
             };
 
             const startNewGame = useCallback(() => {
@@ -488,7 +511,7 @@
                     )}
 
                     <header className="w-full text-center z-20 space-y-2">
-                        <h2 className="text-yellow-400 font-bold tracking-widest text-xl md:text-2xl uppercase drop-shadow-md">
+                        <h2 className="text-yellow-400 font-bold tracking-widest text-2xl md:text-3xl uppercase drop-shadow-md">
                             三星旗艦體驗館-微風南山
                         </h2>
                         <h1 className="text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-100 to-yellow-500 drop-shadow-lg filter pb-2">
@@ -653,29 +676,41 @@
 
                         {/* Content */}
                         <div className="p-8 bg-gradient-to-b from-white to-red-50">
-                            {/* Prize Display (Icon Left, Text Right) */}
-                            <div className="flex items-center justify-center gap-4 mb-8 bg-white p-4 rounded-xl shadow-sm border border-red-100">
-                                <div className="text-5xl filter drop-shadow-md shrink-0">{result?.icon}</div>
-                                <h3 className="text-2xl font-black text-gray-800 text-left leading-tight">
-                                    {result?.name}
-                                </h3>
-                            </div>
-                            
-                            <div className="mb-8 p-5 bg-yellow-50 border-2 border-dashed border-yellow-500 rounded-xl">
-                                {isSimulation ? (
-                                    <div className="text-left text-base text-gray-800 space-y-3 font-bold">
-                                        <p className="flex gap-3"><span className="text-red-600 text-xl">1.</span> <span>找到我們熱情的門市夥伴！</span></p>
-                                        <p className="flex gap-3"><span className="text-red-600 text-xl">2.</span> <span>掃描QR Code，加入官方LINE@。</span></p>
-                                        <p className="flex gap-3"><span className="text-red-600 text-xl">3.</span> <span>即可參加「正式抽獎」！</span></p>
+                            {/* Simulation Mode Content */}
+                            {isSimulation ? (
+                                <>
+                                    {/* Simulation Prize - Smaller */}
+                                    <div className="flex items-center justify-center gap-4 mb-6 bg-white p-4 rounded-xl shadow-sm border border-red-100">
+                                        <div className="text-5xl filter drop-shadow-md shrink-0">{result?.icon}</div>
+                                        <h3 className="text-2xl font-black text-gray-800 text-left leading-tight">{result?.name}</h3>
                                     </div>
-                                ) : (
-                                    <p className="text-red-600 font-bold text-center text-lg mb-2">👇 掃描加入官方帳號領獎 👇</p>
-                                )}
 
-                                <div className="w-48 h-48 bg-white mx-auto mt-4 p-2 shadow-sm rounded-lg flex items-center justify-center">
-                                   <img src="https://github.com/andyhhsu/Breeze-Scratch/blob/main/qr.ioi.tw%20(26).png?raw=true" className="w-full h-full object-contain" alt="QR Code" />
+                                    {/* Instructions for Simulation */}
+                                    <div className="mb-8 p-5 bg-yellow-50 border-2 border-dashed border-yellow-500 rounded-xl">
+                                        <div className="text-left text-base text-gray-800 space-y-3 font-bold">
+                                            <p className="flex gap-3"><span className="text-red-600 text-xl">1.</span> <span>找到我們熱情的門市夥伴！</span></p>
+                                            <p className="flex gap-3"><span className="text-red-600 text-xl">2.</span> <span>掃描QR Code，加入官方LINE@。</span></p>
+                                            <p className="flex gap-3"><span className="text-red-600 text-xl">3.</span> <span>即可參加「正式抽獎」！</span></p>
+                                        </div>
+                                        <div className="w-48 h-48 bg-white mx-auto mt-4 p-2 shadow-sm rounded-lg flex items-center justify-center">
+                                           <img src="https://github.com/andyhhsu/Breeze-Scratch/blob/main/qr.ioi.tw%20(26).png?raw=true" className="w-full h-full object-contain" alt="QR Code" />
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                /* Official Mode Content - NO QR, Larger Prize */
+                                <div className="flex flex-col items-center justify-center py-4">
+                                    <div className="w-40 h-40 bg-yellow-100 rounded-full flex items-center justify-center mb-6 animate-pulse-glow shadow-inner border-4 border-yellow-300">
+                                        <div className="text-8xl filter drop-shadow-lg transform hover:scale-110 transition-transform">{result?.icon}</div>
+                                    </div>
+                                    <h3 className="text-4xl font-black text-red-600 text-center leading-tight mb-3 drop-shadow-sm">
+                                        {result?.name}
+                                    </h3>
+                                    <p className="text-gray-500 text-base mb-8 font-medium bg-white/80 px-4 py-1 rounded-full shadow-sm">
+                                        請向門市人員出示此畫面領獎
+                                    </p>
                                 </div>
-                            </div>
+                            )}
 
                             <button onClick={onClose} className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-6 rounded-full shadow-lg text-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
                                 <Icons.Refresh size={24} /> 關閉視窗
