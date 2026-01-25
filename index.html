@@ -5,8 +5,9 @@ import { Settings, X, RefreshCcw, Save, Info, Volume2, VolumeX } from 'lucide-re
  * 門市活動設定：
  * - 修正：活動名稱改為 Galaxy 「馬」上有禮
  * - 修正：移除銀漆層上的 SAMSUNG 字樣
- * - 音效：Web Audio API 合成音效 (改為 Lazy Init 懶加載模式，修復自動播放錯誤)
+ * - 音效：Web Audio API 合成音效 (Lazy Init 懶加載)
  * - 閒置 180 秒自動重置
+ * - 修復：Favicon 404 與 Input 數值警告問題
  */
 
 // 預設獎品資料
@@ -32,6 +33,15 @@ const App = () => {
   const scratchGainNodeRef = useRef(null);
   const isScratchingRef = useRef(false);
   const isAudioInitializedRef = useRef(false);
+
+  // 修復 Favicon 404：動態注入一個簡單的圖示
+  useEffect(() => {
+    const link = document.createElement('link');
+    link.rel = 'icon';
+    // 使用 Data URI 產生一個禮物 SVG 圖示
+    link.href = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎁</text></svg>';
+    document.head.appendChild(link);
+  }, []);
 
   // 初始化音效引擎 (Lazy Init: 只在使用者互動後執行)
   const initAudio = useCallback(() => {
@@ -603,7 +613,8 @@ const AdminPanel = ({ prizes, setPrizes, onClose }) => {
                   <td className="p-3">
                     <input 
                       type="number" 
-                      value={prize.count} 
+                      min="0"
+                      value={String(prize.count)} // 轉字串以避免部分輸入問題
                       onChange={(e) => handleChange(prize.id, 'count', parseInt(e.target.value) || 0)}
                       className="w-24 border rounded px-2 py-1"
                     />
@@ -615,7 +626,7 @@ const AdminPanel = ({ prizes, setPrizes, onClose }) => {
                         min="0" 
                         max="100" 
                         value={prize.probability} 
-                        onChange={(e) => handleChange(prize.id, 'probability', parseInt(e.target.value))}
+                        onChange={(e) => handleChange(prize.id, 'probability', parseInt(e.target.value) || 0)}
                         className="w-24"
                       />
                       <span className="text-sm font-mono w-8 text-right">{prize.probability}</span>
