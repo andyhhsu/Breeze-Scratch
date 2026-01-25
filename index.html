@@ -1,556 +1,33 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Settings, X, RefreshCcw, Save, Info, Volume2, VolumeX } from 'lucide-react';
-
-/**
- * 門市活動設定：
- * - 修正：活動名稱改為 Galaxy 「馬」上有禮
- * - 修正：移除銀漆層上的 SAMSUNG 字樣
- * - 音效：Web Audio API 合成音效 (Lazy Init 懶加載)
- * - 閒置 180 秒自動重置
- * - 修復：Favicon 404 與 Input 數值警告問題
- */
-
-// 預設獎品資料
-const DEFAULT_PRIZES = [
-  { id: 1, name: 'Galaxy S24 Ultra (體驗券)', count: 5, probability: 5, type: 'grand', icon: '📱' },
-  { id: 2, name: 'Galaxy Buds2 Pro (體驗券)', count: 20, probability: 15, type: 'major', icon: '🎧' },
-  { id: 3, name: '三星新春紅包袋', count: 100, probability: 30, type: 'normal', icon: '🧧' },
-  { id: 4, name: '門市限定精美小禮', count: 999, probability: 50, type: 'normal', icon: '🎁' },
-];
-
-const App = () => {
-  const [view, setView] = useState('game'); // 'game', 'admin'
-  const [prizes, setPrizes] = useState(DEFAULT_PRIZES);
-  
-  const [currentResult, setCurrentResult] = useState(null);
-  
-  const [showResultModal, setShowResultModal] = useState(false);
-  const [resetKey, setResetKey] = useState(0); 
-  const [isMuted, setIsMuted] = useState(false);
-
-  // --- Web Audio API Refs ---
-  const audioCtxRef = useRef(null);
-  const scratchGainNodeRef = useRef(null);
-  const isScratchingRef = useRef(false);
-  const isAudioInitializedRef = useRef(false);
-
-  // 修復 Favicon 404：動態注入一個簡單的圖示
-  useEffect(() => {
-    const link = document.createElement('link');
-    link.rel = 'icon';
-    // 使用 Data URI 產生一個禮物 SVG 圖示
-    link.href = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎁</text></svg>';
-    document.head.appendChild(link);
-  }, []);
-
-  // 初始化音效引擎 (Lazy Init: 只在使用者互動後執行)
-  const initAudio = useCallback(() => {
-    if (isAudioInitializedRef.current) return;
-    if (typeof window === 'undefined') return;
-
-    try {
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContext) return;
-
-      const ctx = new AudioContext();
-      audioCtxRef.current = ctx;
-
-      // 建立刮刮聲的噪音產生器 (White Noise)
-      const bufferSize = 2 * ctx.sampleRate;
-      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-      const output = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        output[i] = (Math.random() * 2 - 1) * 0.5;
-      }
-
-      const whiteNoiseSource = ctx.createBufferSource();
-      whiteNoiseSource.buffer = noiseBuffer;
-      whiteNoiseSource.loop = true;
-      
-      const gainNode = ctx.createGain();
-      gainNode.gain.value = 0; // 預設靜音
-      
-      const filter = ctx.createBiquadFilter();
-      filter.type = 'bandpass';
-      filter.frequency.value = 1000;
-
-      whiteNoiseSource.connect(filter);
-      filter.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      
-      whiteNoiseSource.start();
-      scratchGainNodeRef.current = gainNode;
-      isAudioInitializedRef.current = true;
-      
-    } catch (e) {
-      console.error("Audio init failed:", e);
-    }
-  }, []);
-
-  // 嘗試解鎖音效 (在使用者第一次互動時呼叫)
-  const unlockAudio = useCallback(() => {
-    // 1. 如果還沒初始化，先初始化
-    if (!isAudioInitializedRef.current) {
-      initAudio();
-    }
-    // 2. 如果已經初始化但被暫停 (Suspended)，則恢復
-    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
-      audioCtxRef.current.resume().catch(e => console.log("Audio resume failed:", e));
-    }
-  }, [initAudio]);
-
-  // 播放合成的中獎音效 (三連音)
-  const playWinSound = useCallback(() => {
-    if (isMuted) return;
-    // 確保音效已初始化
-    if (!audioCtxRef.current) initAudio();
-    if (!audioCtxRef.current) return;
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galaxy 「馬」上有禮</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel (讓瀏覽器看得懂 JSX) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 動態 Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎁</text></svg>">
     
-    const ctx = audioCtxRef.current;
-    
-    // 簡單的和弦合成器
-    const playTone = (freq, startTime, duration) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      
-      gain.gain.setValueAtTime(0.1, startTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
-      
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      
-      osc.start(startTime);
-      osc.stop(startTime + duration);
-    };
-
-    const now = ctx.currentTime;
-    // 播放 C Major Arpeggio (C5, E5, G5, C6)
-    playTone(523.25, now, 0.2);       // Do
-    playTone(659.25, now + 0.1, 0.2); // Mi
-    playTone(783.99, now + 0.2, 0.2); // Sol
-    playTone(1046.50, now + 0.3, 0.6);// Do (高音)
-  }, [isMuted, initAudio]);
-
-  // 控制刮刮聲 (透過調整 GainNode 的音量)
-  const toggleScratchSound = useCallback((playing) => {
-    if (isMuted) return;
-    // 如果還沒初始化，嘗試初始化 (通常這時候使用者已經在觸控了)
-    if (!scratchGainNodeRef.current) initAudio();
-    if (!scratchGainNodeRef.current || !audioCtxRef.current) return;
-    
-    const gain = scratchGainNodeRef.current.gain;
-    const now = audioCtxRef.current.currentTime;
-    
-    if (playing) {
-        if (!isScratchingRef.current) {
-            // 淡入音效
-            gain.cancelScheduledValues(now);
-            gain.linearRampToValueAtTime(0.3, now + 0.05);
-            isScratchingRef.current = true;
-        }
-    } else {
-        if (isScratchingRef.current) {
-            // 淡出音效
-            gain.cancelScheduledValues(now);
-            gain.linearRampToValueAtTime(0, now + 0.05);
-            isScratchingRef.current = false;
-        }
-    }
-  }, [isMuted, initAudio]);
-
-  // 權重隨機抽獎邏輯
-  const calculatePrize = (currentPrizes) => {
-    const availablePrizes = currentPrizes.filter(p => p.count > 0);
-    
-    if (availablePrizes.length === 0) {
-      return { id: -1, name: '下次好運！', icon: '🐎', type: 'none' };
-    }
-
-    const totalWeight = availablePrizes.reduce((sum, p) => sum + parseInt(p.probability), 0);
-    let random = Math.random() * totalWeight;
-
-    for (const prize of availablePrizes) {
-      if (random < prize.probability) {
-        return prize;
-      }
-      random -= prize.probability;
-    }
-    return availablePrizes[availablePrizes.length - 1];
-  };
-
-  // 啟動新遊戲
-  const startNewGame = useCallback(() => {
-    const newPrize = calculatePrize(prizes);
-    setCurrentResult(newPrize);
-    setResetKey(prev => prev + 1);
-    setShowResultModal(false);
-    toggleScratchSound(false);
-  }, [prizes, toggleScratchSound]);
-
-  // 首次加載
-  useEffect(() => {
-    setCurrentResult(calculatePrize(DEFAULT_PRIZES));
-    // 清理函數：組件卸載時關閉 AudioContext
-    return () => {
-       if (audioCtxRef.current) {
-         audioCtxRef.current.close().catch(e => console.log("Audio close error", e));
-         isAudioInitializedRef.current = false;
-       }
-    };
-  }, []);
-
-  // 當刮刮樂完成時觸發
-  const handleScratchComplete = () => {
-    toggleScratchSound(false);
-
-    if (currentResult && currentResult.id !== -1) {
-      setPrizes(prev => prev.map(p => 
-        p.id === currentResult.id ? { ...p, count: p.count - 1 } : p
-      ));
-    }
-
-    setTimeout(() => {
-      setShowResultModal(true);
-      playWinSound(); 
-    }, 500);
-  };
-
-  // --- 閒置自動重置邏輯 ---
-  useEffect(() => {
-    let timeoutId;
-    const IDLE_TIMEOUT = 180 * 1000; 
-
-    const resetTimer = () => {
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => {
-        console.log('User is idle, resetting game...');
-        startNewGame();
-      }, IDLE_TIMEOUT);
-    };
-
-    const handleInteraction = () => {
-        resetTimer();
-        unlockAudio(); // 確保有互動時解鎖音效
-    };
-
-    window.addEventListener('mousemove', handleInteraction);
-    window.addEventListener('mousedown', handleInteraction);
-    window.addEventListener('touchstart', handleInteraction);
-    window.addEventListener('click', handleInteraction);
-    window.addEventListener('keydown', handleInteraction);
-
-    resetTimer();
-
-    return () => {
-      clearTimeout(timeoutId);
-      window.removeEventListener('mousemove', handleInteraction);
-      window.removeEventListener('mousedown', handleInteraction);
-      window.removeEventListener('touchstart', handleInteraction);
-      window.removeEventListener('click', handleInteraction);
-      window.removeEventListener('keydown', handleInteraction);
-    };
-  }, [startNewGame, unlockAudio]);
-
-  return (
-    <div className="min-h-screen bg-red-900 font-sans overflow-hidden relative selection:bg-yellow-500 selection:text-red-900">
-      {/* 背景裝飾 */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-20 -left-20 w-64 h-64 bg-yellow-500 rounded-full blur-[100px] opacity-20 animate-pulse"></div>
-        <div className="absolute top-1/2 -right-20 w-80 h-80 bg-red-500 rounded-full blur-[120px] opacity-30"></div>
-        <div className="absolute bottom-0 left-1/3 w-full h-32 bg-gradient-to-t from-red-950 to-transparent opacity-80"></div>
-        
-        <style>{`
-          @keyframes float {
+    <style>
+        /* CSS 動畫定義 */
+        @keyframes float {
             0% { transform: translateY(0px) rotate(0deg); opacity: 0; }
             50% { opacity: 1; }
             100% { transform: translateY(100vh) rotate(360deg); opacity: 0; }
-          }
-          .particle {
+        }
+        .particle {
             position: absolute;
             top: -10px;
             color: #FFD700;
             font-size: 1.5rem;
             animation: float 10s linear infinite;
-          }
-        `}</style>
-        {[...Array(10)].map((_, i) => (
-          <div key={i} className="particle" style={{
-            left: `${Math.random() * 100}%`,
-            animationDelay: `${Math.random() * 5}s`,
-            fontSize: `${Math.random() * 20 + 10}px`
-          }}>✨</div>
-        ))}
-      </div>
-
-      {/* 右下角工具列：靜音 + 設定 */}
-      <div className="absolute bottom-4 right-4 z-50 flex gap-2">
-        <button 
-          onClick={() => setIsMuted(!isMuted)}
-          className="p-2 text-white/40 hover:text-white/80 transition-colors bg-black/20 rounded-full backdrop-blur-sm"
-          title={isMuted ? "開啟聲音" : "靜音"}
-        >
-          {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
-        </button>
-        <button 
-          onClick={() => setView('admin')}
-          className="p-2 text-white/20 hover:text-white/80 transition-colors"
-        >
-          <Settings size={24} />
-        </button>
-      </div>
-
-      {/* 主要內容切換 */}
-      {view === 'game' ? (
-        <GameInterface 
-          result={currentResult} 
-          onComplete={handleScratchComplete} 
-          resetKey={resetKey}
-          onScratchStart={() => toggleScratchSound(true)}
-          onScratchEnd={() => toggleScratchSound(false)}
-        />
-      ) : (
-        <AdminPanel 
-          prizes={prizes} 
-          setPrizes={setPrizes} 
-          onClose={() => setView('game')} 
-        />
-      )}
-
-      {/* 中獎/結果彈窗 */}
-      {showResultModal && (
-        <ResultModal 
-          result={currentResult} 
-          onClose={startNewGame} // 改為呼叫 startNewGame 來完全重置
-        />
-      )}
-    </div>
-  );
-};
-
-/**
- * 遊戲主介面
- */
-const GameInterface = ({ result, onComplete, resetKey, onScratchStart, onScratchEnd }) => {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen px-4 z-10 relative">
-      <header className="absolute top-8 w-full text-center">
-        <h2 className="text-yellow-400 font-bold tracking-widest text-lg md:text-xl uppercase drop-shadow-md mb-1">
-          三星旗艦體驗館-微風南山
-        </h2>
-        <h1 className="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-200 to-yellow-600 drop-shadow-lg filter">
-          Galaxy 「馬」上有禮
-        </h1>
-        <p className="text-white/80 mt-2 text-sm md:text-base font-medium tracking-wide">
-          加入門市LINE@即可參加乙次
-        </p>
-      </header>
-
-      <div className="mt-12 relative group">
-        <div className="absolute -inset-1 bg-gradient-to-r from-yellow-600 via-yellow-300 to-yellow-600 rounded-xl blur opacity-75 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 animate-tilt"></div>
-        
-        <div className="relative w-[320px] h-[320px] md:w-[500px] md:h-[400px] bg-white rounded-xl shadow-2xl overflow-hidden border-4 border-yellow-600">
-          
-          {/* 底層：中獎結果 - 這裡顯示的 result 是被鎖定的，不會因為庫存更新而改變 */}
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-50 pattern-grid-lg text-center p-6">
-            <div className="animate-bounce mb-4 text-6xl md:text-8xl filter drop-shadow-lg">
-              {result?.icon || '🎁'}
-            </div>
-            <h3 className="text-xl md:text-3xl font-bold text-red-800 mb-2">
-              恭喜獲得
-            </h3>
-            <p className="text-2xl md:text-4xl font-black text-red-600 leading-tight">
-              {result?.name || '神秘好禮'}
-            </p>
-          </div>
-
-          {/* 頂層：Canvas 塗層 */}
-          <ScratchCanvas 
-            width={500}
-            height={400} 
-            onComplete={onComplete}
-            resetKey={resetKey}
-            onScratchStart={onScratchStart}
-            onScratchEnd={onScratchEnd}
-          />
-        </div>
-      </div>
-
-      <div className="mt-8 text-yellow-200/80 text-sm animate-pulse">
-        👆 請用手指在上方區域刮開銀漆
-      </div>
-    </div>
-  );
-};
-
-/**
- * 刮刮卡 Canvas 元件
- */
-const ScratchCanvas = ({ width, height, onComplete, resetKey, onScratchStart, onScratchEnd }) => {
-  const canvasRef = useRef(null);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [completed, setCompleted] = useState(false);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    
-    // 重置狀態
-    canvas.style.transition = 'none';
-    canvas.style.opacity = '1';
-    
-    setCompleted(false);
-    canvas.width = width;
-    canvas.height = height;
-
-    // 繪製銀漆
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = '#CCCCCC';
-    ctx.fillRect(0, 0, width, height);
-
-    // 雜訊
-    for(let i=0; i<3000; i++) {
-        ctx.fillStyle = Math.random() > 0.5 ? '#AAAAAA' : '#DDDDDD';
-        ctx.fillRect(Math.random() * width, Math.random() * height, 2, 2);
-    }
-
-    // 文字
-    ctx.font = 'bold 36px sans-serif';
-    ctx.fillStyle = '#666666';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    // ctx.fillText('SAMSUNG', width / 2, height / 2 - 30); // 移除這行
-    ctx.font = 'bold 30px sans-serif';
-    ctx.fillText('刮開立即中獎', width / 2, height / 2); // 置中顯示
-
-    // 邊框
-    ctx.strokeStyle = '#B8860B';
-    ctx.lineWidth = 10;
-    ctx.strokeRect(0, 0, width, height);
-
-  }, [resetKey, width, height]);
-
-  const checkProgress = () => {
-    if (completed) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const imageData = ctx.getImageData(0, 0, width, height);
-    const pixels = imageData.data;
-    let transparentCount = 0;
-    
-    for (let i = 0; i < pixels.length; i += 40) {
-      if (pixels[i + 3] < 128) transparentCount++;
-    }
-
-    const totalPixelsToCheck = pixels.length / 40;
-    const percentage = (transparentCount / totalPixelsToCheck) * 100;
-
-    if (percentage > 45) {
-      setCompleted(true);
-      canvas.style.transition = 'opacity 1s';
-      canvas.style.opacity = '0';
-      onComplete();
-    }
-  };
-
-  const getPosition = (e) => {
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    let clientX, clientY;
-    if (e.touches && e.touches[0]) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = e.clientX;
-      clientY = e.clientY;
-    }
-    const scaleX = width / rect.width;
-    const scaleY = height / rect.height;
-    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
-  };
-
-  const startDrawing = () => {
-    if (completed) return;
-    setIsDrawing(true);
-    onScratchStart(); 
-  };
-
-  const stopDrawing = () => {
-    setIsDrawing(false);
-    onScratchEnd(); 
-  };
-
-  const scratch = (e) => {
-    if (!isDrawing || completed) return;
-    e.preventDefault();
-
-    const pos = getPosition(e);
-    const ctx = canvasRef.current.getContext('2d');
-    
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.beginPath();
-    ctx.arc(pos.x, pos.y, 30, 0, Math.PI * 2);
-    ctx.fill();
-
-    if (Math.random() > 0.8) checkProgress();
-  };
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="absolute inset-0 w-full h-full cursor-pointer touch-none"
-      onMouseDown={startDrawing}
-      onMouseUp={stopDrawing}
-      onMouseLeave={stopDrawing}
-      onMouseMove={scratch}
-      onTouchStart={startDrawing}
-      onTouchEnd={stopDrawing}
-      onTouchMove={scratch}
-    />
-  );
-};
-
-/**
- * 彈窗：結果展示與 QR Code 導流
- */
-const ResultModal = ({ result, onClose }) => {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl transform transition-all animate-bounce-in relative">
-        <div className="bg-red-600 p-6 text-center relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/diagmonds-light.png')] opacity-20"></div>
-          <h2 className="text-2xl font-bold text-yellow-300 mb-1 relative z-10">🎉 恭喜您刮中 🎉</h2>
-          <div className="text-4xl relative z-10 mt-2">{result?.icon}</div>
-        </div>
-
-        <div className="p-8 text-center bg-gradient-to-b from-white to-red-50">
-          <h3 className="text-2xl font-black text-gray-800 mb-2">{result?.name}</h3>
-          
-          <div className="my-6 p-4 bg-yellow-50 border-2 border-dashed border-yellow-500 rounded-lg">
-            <p className="text-red-600 font-bold text-sm mb-2"> 👇 掃描加入官方帳號領獎 👇</p>
-            <div className="w-48 h-48 bg-white mx-auto p-2 shadow-sm rounded-lg flex items-center justify-center relative overflow-hidden">
-               <img 
-                 src="https://github.com/andyhhsu/breeze-Prize-Wheel/blob/main/LINE.png?raw=true" 
-                 alt="Line QR Code"
-                 className="w-full h-full object-contain"
-               />
-            </div>
-            <p className="text-xs text-gray-500 mt-2">請向門市人員出示加入畫面</p>
-          </div>
-
-          <button 
-            onClick={onClose}
-            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
-          >
-            <RefreshCcw size={18} />
-            再玩一次 (給下一位)
-          </button>
-        </div>
-      </div>
-      
-      <style>{`
+        }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes bounceIn { 
           0% { opacity: 0; transform: scale(0.3); } 
@@ -560,112 +37,617 @@ const ResultModal = ({ result, onClose }) => {
         }
         .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
         .animate-bounce-in { animation: bounceIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards; }
-      `}</style>
-    </div>
-  );
-};
+    </style>
+</head>
+<body class="bg-red-900 m-0 p-0 overflow-hidden">
+    <div id="root"></div>
 
-/**
- * 後台管理面板
- */
-const AdminPanel = ({ prizes, setPrizes, onClose }) => {
-  const handleChange = (id, field, value) => {
-    setPrizes(prizes.map(p => 
-      p.id === id ? { ...p, [field]: value } : p
-    ));
-  };
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
 
-  return (
-    <div className="absolute inset-0 bg-gray-100 z-50 flex flex-col p-4 md:p-8 overflow-y-auto text-gray-800">
-      <div className="flex justify-between items-center mb-6 max-w-4xl mx-auto w-full">
-        <h2 className="text-2xl font-bold flex items-center gap-2 text-gray-800">
-          <Settings className="text-red-600" /> 活動參數設定 (前端模擬)
-        </h2>
-        <button onClick={onClose} className="p-2 bg-gray-200 rounded-full hover:bg-gray-300">
-          <X size={24} />
-        </button>
-      </div>
+        // --- 圖示組件 (手動定義 SVG 以便在單一檔案中使用) ---
+        const Settings = ({size=24, className=""}) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        );
+        const X = ({size=24, className=""}) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        );
+        const RefreshCcw = ({size=24, className=""}) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+        );
+        const Save = ({size=24, className=""}) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        );
+        const Info = ({size=24, className=""}) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        );
+        const Volume2 = ({size=24, className=""}) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+        );
+        const VolumeX = ({size=24, className=""}) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" x2="17" y1="9" y2="15"/><line x1="17" x2="23" y1="9" y2="15"/></svg>
+        );
 
-      <div className="bg-white rounded-xl shadow-lg p-6 max-w-4xl mx-auto w-full">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b-2 border-gray-100">
-                <th className="p-3 text-sm font-semibold text-gray-600">圖示</th>
-                <th className="p-3 text-sm font-semibold text-gray-600">獎品名稱</th>
-                <th className="p-3 text-sm font-semibold text-gray-600">剩餘數量</th>
-                <th className="p-3 text-sm font-semibold text-gray-600">權重 (機率)</th>
-                <th className="p-3 text-sm font-semibold text-gray-600">類型</th>
-              </tr>
-            </thead>
-            <tbody>
-              {prizes.map((prize) => (
-                <tr key={prize.id} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="p-3 text-2xl">{prize.icon}</td>
-                  <td className="p-3">
-                    <input 
-                      type="text" 
-                      value={prize.name} 
-                      onChange={(e) => handleChange(prize.id, 'name', e.target.value)}
-                      className="w-full border rounded px-2 py-1 focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
-                  </td>
-                  <td className="p-3">
-                    <input 
-                      type="number" 
-                      min="0"
-                      value={String(prize.count)} // 轉字串以避免部分輸入問題
-                      onChange={(e) => handleChange(prize.id, 'count', parseInt(e.target.value) || 0)}
-                      className="w-24 border rounded px-2 py-1"
-                    />
-                  </td>
-                  <td className="p-3">
-                     <div className="flex items-center gap-2">
-                      <input 
-                        type="range" 
-                        min="0" 
-                        max="100" 
-                        value={prize.probability} 
-                        onChange={(e) => handleChange(prize.id, 'probability', parseInt(e.target.value) || 0)}
-                        className="w-24"
-                      />
-                      <span className="text-sm font-mono w-8 text-right">{prize.probability}</span>
-                     </div>
-                  </td>
-                  <td className="p-3">
-                    <span className={`text-xs px-2 py-1 rounded-full ${prize.type === 'grand' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'}`}>
-                      {prize.type}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        // 預設獎品資料
+        const DEFAULT_PRIZES = [
+          { id: 1, name: 'Galaxy S24 Ultra (體驗券)', count: 5, probability: 5, type: 'grand', icon: '📱' },
+          { id: 2, name: 'Galaxy Buds2 Pro (體驗券)', count: 20, probability: 15, type: 'major', icon: '🎧' },
+          { id: 3, name: '三星新春紅包袋', count: 100, probability: 30, type: 'normal', icon: '🧧' },
+          { id: 4, name: '門市限定精美小禮', count: 999, probability: 50, type: 'normal', icon: '🎁' },
+        ];
 
-        <div className="mt-6 bg-blue-50 p-4 rounded-lg flex items-start gap-3">
-          <Info className="text-blue-600 shrink-0 mt-1" size={20} />
-          <div className="text-sm text-blue-800">
-            <p className="font-bold">說明：</p>
-            <ul className="list-disc pl-4 mt-1 space-y-1">
-              <li>此處設定為純前端模擬，重新整理網頁後會恢復預設值。</li>
-              <li>權重越高，被抽中的機率越大。若數量歸零，該獎項將不會被抽出。</li>
-              <li>現場人員可根據人流狀況，動態調整「大獎」的出現機率來控制預算或炒熱氣氛。</li>
-            </ul>
-          </div>
-        </div>
+        const App = () => {
+          const [view, setView] = useState('game'); // 'game', 'admin'
+          const [prizes, setPrizes] = useState(DEFAULT_PRIZES);
+          
+          const [currentResult, setCurrentResult] = useState(null);
+          
+          const [showResultModal, setShowResultModal] = useState(false);
+          const [resetKey, setResetKey] = useState(0); 
+          const [isMuted, setIsMuted] = useState(false);
 
-        <div className="mt-6 flex justify-end">
-          <button 
-            onClick={onClose}
-            className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg flex items-center gap-2 shadow-md"
-          >
-            <Save size={18} /> 保存並返回遊戲
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
+          // --- Web Audio API Refs ---
+          const audioCtxRef = useRef(null);
+          const scratchGainNodeRef = useRef(null);
+          const isScratchingRef = useRef(false);
+          const isAudioInitializedRef = useRef(false);
 
-export default App;
+          // 初始化音效引擎 (Lazy Init: 只在使用者互動後執行)
+          const initAudio = useCallback(() => {
+            if (isAudioInitializedRef.current) return;
+            if (typeof window === 'undefined') return;
+
+            try {
+              const AudioContext = window.AudioContext || window.webkitAudioContext;
+              if (!AudioContext) return;
+
+              const ctx = new AudioContext();
+              audioCtxRef.current = ctx;
+
+              // 建立刮刮聲的噪音產生器 (White Noise)
+              const bufferSize = 2 * ctx.sampleRate;
+              const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+              const output = noiseBuffer.getChannelData(0);
+              for (let i = 0; i < bufferSize; i++) {
+                output[i] = (Math.random() * 2 - 1) * 0.5;
+              }
+
+              const whiteNoiseSource = ctx.createBufferSource();
+              whiteNoiseSource.buffer = noiseBuffer;
+              whiteNoiseSource.loop = true;
+              
+              const gainNode = ctx.createGain();
+              gainNode.gain.value = 0; // 預設靜音
+              
+              const filter = ctx.createBiquadFilter();
+              filter.type = 'bandpass';
+              filter.frequency.value = 1000;
+
+              whiteNoiseSource.connect(filter);
+              filter.connect(gainNode);
+              gainNode.connect(ctx.destination);
+              
+              whiteNoiseSource.start();
+              scratchGainNodeRef.current = gainNode;
+              isAudioInitializedRef.current = true;
+              
+            } catch (e) {
+              console.error("Audio init failed:", e);
+            }
+          }, []);
+
+          // 嘗試解鎖音效
+          const unlockAudio = useCallback(() => {
+            if (!isAudioInitializedRef.current) {
+              initAudio();
+            }
+            if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+              audioCtxRef.current.resume().catch(e => console.log("Audio resume failed:", e));
+            }
+          }, [initAudio]);
+
+          // 播放合成的中獎音效
+          const playWinSound = useCallback(() => {
+            if (isMuted) return;
+            if (!audioCtxRef.current) initAudio();
+            if (!audioCtxRef.current) return;
+            
+            const ctx = audioCtxRef.current;
+            
+            const playTone = (freq, startTime, duration) => {
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              
+              osc.type = 'sine';
+              osc.frequency.value = freq;
+              
+              gain.gain.setValueAtTime(0.1, startTime);
+              gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+              
+              osc.connect(gain);
+              gain.connect(ctx.destination);
+              
+              osc.start(startTime);
+              osc.stop(startTime + duration);
+            };
+
+            const now = ctx.currentTime;
+            playTone(523.25, now, 0.2);       // Do
+            playTone(659.25, now + 0.1, 0.2); // Mi
+            playTone(783.99, now + 0.2, 0.2); // Sol
+            playTone(1046.50, now + 0.3, 0.6);// Do (高音)
+          }, [isMuted, initAudio]);
+
+          // 控制刮刮聲
+          const toggleScratchSound = useCallback((playing) => {
+            if (isMuted) return;
+            if (!scratchGainNodeRef.current) initAudio();
+            if (!scratchGainNodeRef.current || !audioCtxRef.current) return;
+            
+            const gain = scratchGainNodeRef.current.gain;
+            const now = audioCtxRef.current.currentTime;
+            
+            if (playing) {
+                if (!isScratchingRef.current) {
+                    gain.cancelScheduledValues(now);
+                    gain.linearRampToValueAtTime(0.3, now + 0.05);
+                    isScratchingRef.current = true;
+                }
+            } else {
+                if (isScratchingRef.current) {
+                    gain.cancelScheduledValues(now);
+                    gain.linearRampToValueAtTime(0, now + 0.05);
+                    isScratchingRef.current = false;
+                }
+            }
+          }, [isMuted, initAudio]);
+
+          // 權重隨機抽獎邏輯
+          const calculatePrize = (currentPrizes) => {
+            const availablePrizes = currentPrizes.filter(p => p.count > 0);
+            
+            if (availablePrizes.length === 0) {
+              return { id: -1, name: '下次好運！', icon: '🐎', type: 'none' };
+            }
+
+            const totalWeight = availablePrizes.reduce((sum, p) => sum + parseInt(p.probability), 0);
+            let random = Math.random() * totalWeight;
+
+            for (const prize of availablePrizes) {
+              if (random < prize.probability) {
+                return prize;
+              }
+              random -= prize.probability;
+            }
+            return availablePrizes[availablePrizes.length - 1];
+          };
+
+          // 啟動新遊戲
+          const startNewGame = useCallback(() => {
+            const newPrize = calculatePrize(prizes);
+            setCurrentResult(newPrize);
+            setResetKey(prev => prev + 1);
+            setShowResultModal(false);
+            toggleScratchSound(false);
+          }, [prizes, toggleScratchSound]);
+
+          // 首次加載
+          useEffect(() => {
+            setCurrentResult(calculatePrize(DEFAULT_PRIZES));
+            return () => {
+               if (audioCtxRef.current) {
+                 audioCtxRef.current.close().catch(e => console.log("Audio close error", e));
+                 isAudioInitializedRef.current = false;
+               }
+            };
+          }, []);
+
+          // 當刮刮樂完成時觸發
+          const handleScratchComplete = () => {
+            toggleScratchSound(false);
+
+            if (currentResult && currentResult.id !== -1) {
+              setPrizes(prev => prev.map(p => 
+                p.id === currentResult.id ? { ...p, count: p.count - 1 } : p
+              ));
+            }
+
+            setTimeout(() => {
+              setShowResultModal(true);
+              playWinSound(); 
+            }, 500);
+          };
+
+          // 閒置自動重置
+          useEffect(() => {
+            let timeoutId;
+            const IDLE_TIMEOUT = 180 * 1000; 
+
+            const resetTimer = () => {
+              clearTimeout(timeoutId);
+              timeoutId = setTimeout(() => {
+                console.log('User is idle, resetting game...');
+                startNewGame();
+              }, IDLE_TIMEOUT);
+            };
+
+            const handleInteraction = () => {
+                resetTimer();
+                unlockAudio(); 
+            };
+
+            window.addEventListener('mousemove', handleInteraction);
+            window.addEventListener('mousedown', handleInteraction);
+            window.addEventListener('touchstart', handleInteraction);
+            window.addEventListener('click', handleInteraction);
+            window.addEventListener('keydown', handleInteraction);
+
+            resetTimer();
+
+            return () => {
+              clearTimeout(timeoutId);
+              window.removeEventListener('mousemove', handleInteraction);
+              window.removeEventListener('mousedown', handleInteraction);
+              window.removeEventListener('touchstart', handleInteraction);
+              window.removeEventListener('click', handleInteraction);
+              window.removeEventListener('keydown', handleInteraction);
+            };
+          }, [startNewGame, unlockAudio]);
+
+          return (
+            <div className="min-h-screen bg-red-900 font-sans overflow-hidden relative selection:bg-yellow-500 selection:text-red-900">
+              {/* 背景裝飾 */}
+              <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                <div className="absolute -top-20 -left-20 w-64 h-64 bg-yellow-500 rounded-full blur-[100px] opacity-20 animate-pulse"></div>
+                <div className="absolute top-1/2 -right-20 w-80 h-80 bg-red-500 rounded-full blur-[120px] opacity-30"></div>
+                <div className="absolute bottom-0 left-1/3 w-full h-32 bg-gradient-to-t from-red-950 to-transparent opacity-80"></div>
+                {[...Array(10)].map((_, i) => (
+                  <div key={i} className="particle" style={{
+                    left: `${Math.random() * 100}%`,
+                    animationDelay: `${Math.random() * 5}s`,
+                    fontSize: `${Math.random() * 20 + 10}px`
+                  }}>✨</div>
+                ))}
+              </div>
+
+              {/* 右下角工具列 */}
+              <div className="absolute bottom-4 right-4 z-50 flex gap-2">
+                <button 
+                  onClick={() => setIsMuted(!isMuted)}
+                  className="p-2 text-white/40 hover:text-white/80 transition-colors bg-black/20 rounded-full backdrop-blur-sm"
+                  title={isMuted ? "開啟聲音" : "靜音"}
+                >
+                  {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
+                </button>
+                <button 
+                  onClick={() => setView('admin')}
+                  className="p-2 text-white/20 hover:text-white/80 transition-colors"
+                >
+                  <Settings size={24} />
+                </button>
+              </div>
+
+              {view === 'game' ? (
+                <GameInterface 
+                  result={currentResult} 
+                  onComplete={handleScratchComplete} 
+                  resetKey={resetKey}
+                  onScratchStart={() => toggleScratchSound(true)}
+                  onScratchEnd={() => toggleScratchSound(false)}
+                />
+              ) : (
+                <AdminPanel 
+                  prizes={prizes} 
+                  setPrizes={setPrizes} 
+                  onClose={() => setView('game')} 
+                />
+              )}
+
+              {showResultModal && (
+                <ResultModal 
+                  result={currentResult} 
+                  onClose={startNewGame} 
+                />
+              )}
+            </div>
+          );
+        };
+
+        const GameInterface = ({ result, onComplete, resetKey, onScratchStart, onScratchEnd }) => {
+          return (
+            <div className="flex flex-col items-center justify-center min-h-screen px-4 z-10 relative">
+              <header className="absolute top-8 w-full text-center">
+                <h2 className="text-yellow-400 font-bold tracking-widest text-lg md:text-xl uppercase drop-shadow-md mb-1">
+                  三星旗艦體驗館-微風南山
+                </h2>
+                <h1 className="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-200 to-yellow-600 drop-shadow-lg filter">
+                  Galaxy 「馬」上有禮
+                </h1>
+                <p className="text-white/80 mt-2 text-sm md:text-base font-medium tracking-wide">
+                  加入門市LINE@即可參加乙次
+                </p>
+              </header>
+
+              <div className="mt-12 relative group">
+                <div className="absolute -inset-1 bg-gradient-to-r from-yellow-600 via-yellow-300 to-yellow-600 rounded-xl blur opacity-75 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 animate-tilt"></div>
+                
+                <div className="relative w-[320px] h-[320px] md:w-[500px] md:h-[400px] bg-white rounded-xl shadow-2xl overflow-hidden border-4 border-yellow-600">
+                  
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-50 pattern-grid-lg text-center p-6">
+                    <div className="animate-bounce mb-4 text-6xl md:text-8xl filter drop-shadow-lg">
+                      {result?.icon || '🎁'}
+                    </div>
+                    <h3 className="text-xl md:text-3xl font-bold text-red-800 mb-2">
+                      恭喜獲得
+                    </h3>
+                    <p className="text-2xl md:text-4xl font-black text-red-600 leading-tight">
+                      {result?.name || '神秘好禮'}
+                    </p>
+                  </div>
+
+                  <ScratchCanvas 
+                    width={500}
+                    height={400} 
+                    onComplete={onComplete}
+                    resetKey={resetKey}
+                    onScratchStart={onScratchStart}
+                    onScratchEnd={onScratchEnd}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-8 text-yellow-200/80 text-sm animate-pulse">
+                👆 請用手指在上方區域刮開銀漆
+              </div>
+            </div>
+          );
+        };
+
+        const ScratchCanvas = ({ width, height, onComplete, resetKey, onScratchStart, onScratchEnd }) => {
+          const canvasRef = useRef(null);
+          const [isDrawing, setIsDrawing] = useState(false);
+          const [completed, setCompleted] = useState(false);
+
+          useEffect(() => {
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext('2d');
+            
+            canvas.style.transition = 'none';
+            canvas.style.opacity = '1';
+            
+            setCompleted(false);
+            canvas.width = width;
+            canvas.height = height;
+
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = '#CCCCCC';
+            ctx.fillRect(0, 0, width, height);
+
+            for(let i=0; i<3000; i++) {
+                ctx.fillStyle = Math.random() > 0.5 ? '#AAAAAA' : '#DDDDDD';
+                ctx.fillRect(Math.random() * width, Math.random() * height, 2, 2);
+            }
+
+            ctx.font = 'bold 36px sans-serif';
+            ctx.fillStyle = '#666666';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = 'bold 30px sans-serif';
+            ctx.fillText('刮開立即中獎', width / 2, height / 2);
+
+            ctx.strokeStyle = '#B8860B';
+            ctx.lineWidth = 10;
+            ctx.strokeRect(0, 0, width, height);
+
+          }, [resetKey, width, height]);
+
+          const checkProgress = () => {
+            if (completed) return;
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const pixels = imageData.data;
+            let transparentCount = 0;
+            
+            for (let i = 0; i < pixels.length; i += 40) {
+              if (pixels[i + 3] < 128) transparentCount++;
+            }
+
+            const totalPixelsToCheck = pixels.length / 40;
+            const percentage = (transparentCount / totalPixelsToCheck) * 100;
+
+            if (percentage > 45) {
+              setCompleted(true);
+              canvas.style.transition = 'opacity 1s';
+              canvas.style.opacity = '0';
+              onComplete();
+            }
+          };
+
+          const getPosition = (e) => {
+            const canvas = canvasRef.current;
+            const rect = canvas.getBoundingClientRect();
+            let clientX, clientY;
+            if (e.touches && e.touches[0]) {
+              clientX = e.touches[0].clientX;
+              clientY = e.touches[0].clientY;
+            } else {
+              clientX = e.clientX;
+              clientY = e.clientY;
+            }
+            const scaleX = width / rect.width;
+            const scaleY = height / rect.height;
+            return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+          };
+
+          const startDrawing = () => {
+            if (completed) return;
+            setIsDrawing(true);
+            onScratchStart(); 
+          };
+
+          const stopDrawing = () => {
+            setIsDrawing(false);
+            onScratchEnd(); 
+          };
+
+          const scratch = (e) => {
+            if (!isDrawing || completed) return;
+            e.preventDefault();
+
+            const pos = getPosition(e);
+            const ctx = canvasRef.current.getContext('2d');
+            
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 30, 0, Math.PI * 2);
+            ctx.fill();
+
+            if (Math.random() > 0.8) checkProgress();
+          };
+
+          return (
+            <canvas
+              ref={canvasRef}
+              className="absolute inset-0 w-full h-full cursor-pointer touch-none"
+              onMouseDown={startDrawing}
+              onMouseUp={stopDrawing}
+              onMouseLeave={stopDrawing}
+              onMouseMove={scratch}
+              onTouchStart={startDrawing}
+              onTouchEnd={stopDrawing}
+              onTouchMove={scratch}
+            />
+          );
+        };
+
+        const ResultModal = ({ result, onClose }) => {
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+              <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl transform transition-all animate-bounce-in relative">
+                <div className="bg-red-600 p-6 text-center relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/diagmonds-light.png')] opacity-20"></div>
+                  <h2 className="text-2xl font-bold text-yellow-300 mb-1 relative z-10">🎉 恭喜您刮中 🎉</h2>
+                  <div className="text-4xl relative z-10 mt-2">{result?.icon}</div>
+                </div>
+
+                <div className="p-8 text-center bg-gradient-to-b from-white to-red-50">
+                  <h3 className="text-2xl font-black text-gray-800 mb-2">{result?.name}</h3>
+                  
+                  <div className="my-6 p-4 bg-yellow-50 border-2 border-dashed border-yellow-500 rounded-lg">
+                    <p className="text-red-600 font-bold text-sm mb-2"> 👇 掃描加入官方帳號領獎 👇</p>
+                    <div className="w-48 h-48 bg-white mx-auto p-2 shadow-sm rounded-lg flex items-center justify-center relative overflow-hidden">
+                       <img 
+                         src="https://github.com/andyhhsu/breeze-Prize-Wheel/blob/main/LINE.png?raw=true" 
+                         alt="Line QR Code"
+                         className="w-full h-full object-contain"
+                       />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">請向門市人員出示加入畫面</p>
+                  </div>
+
+                  <button 
+                    onClick={onClose}
+                    className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <RefreshCcw size={18} />
+                    再玩一次 (給下一位)
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const AdminPanel = ({ prizes, setPrizes, onClose }) => {
+          const handleChange = (id, field, value) => {
+            setPrizes(prizes.map(p => 
+              p.id === id ? { ...p, [field]: value } : p
+            ));
+          };
+
+          return (
+            <div className="absolute inset-0 bg-gray-100 z-50 flex flex-col p-4 md:p-8 overflow-y-auto text-gray-800">
+              <div className="flex justify-between items-center mb-6 max-w-4xl mx-auto w-full">
+                <h2 className="text-2xl font-bold flex items-center gap-2 text-gray-800">
+                  <Settings className="text-red-600" /> 活動參數設定 (前端模擬)
+                </h2>
+                <button onClick={onClose} className="p-2 bg-gray-200 rounded-full hover:bg-gray-300">
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-lg p-6 max-w-4xl mx-auto w-full">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b-2 border-gray-100">
+                        <th className="p-3 text-sm font-semibold text-gray-600">圖示</th>
+                        <th className="p-3 text-sm font-semibold text-gray-600">獎品名稱</th>
+                        <th className="p-3 text-sm font-semibold text-gray-600">剩餘數量</th>
+                        <th className="p-3 text-sm font-semibold text-gray-600">權重 (機率)</th>
+                        <th className="p-3 text-sm font-semibold text-gray-600">類型</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {prizes.map((prize) => (
+                        <tr key={prize.id} className="border-b border-gray-50 hover:bg-gray-50">
+                          <td className="p-3 text-2xl">{prize.icon}</td>
+                          <td className="p-3">
+                            <input 
+                              type="text" 
+                              value={prize.name} 
+                              onChange={(e) => handleChange(prize.id, 'name', e.target.value)}
+                              className="w-full border rounded px-2 py-1 focus:ring-2 focus:ring-blue-500 outline-none"
+                            />
+                          </td>
+                          <td className="p-3">
+                            <input 
+                              type="number" 
+                              min="0"
+                              value={String(prize.count)}
+                              onChange={(e) => handleChange(prize.id, 'count', parseInt(e.target.value) || 0)}
+                              className="w-24 border rounded px-2 py-1"
+                            />
+                          </td>
+                          <td className="p-3">
+                             <div className="flex items-center gap-2">
+                              <input 
+                                type="range" 
+                                min="0" 
+                                max="100" 
+                                value={prize.probability} 
+                                onChange={(e) => handleChange(prize.id, 'probability', parseInt(e.target.value) || 0)}
+                                className="w-24"
+                              />
+                              <span className="text-sm font-mono w-8 text-right">{prize.probability}</span>
+                             </div>
+                          </td>
+                          <td className="p-3">
+                            <span className={`text-xs px-2 py-1 rounded-full ${prize.type === 'grand' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'}`}>
+                              {prize.type}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-6 flex justify-end">
+                  <button 
+                    onClick={onClose}
+                    className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg flex items-center gap-2 shadow-md"
+                  >
+                    <Save size={18} /> 保存並返回遊戲
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
