@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 美食探險家</title>
+    <!-- 載入 Tailwind CSS 框架 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 載入 Google Fonts 的 Inter 和 Noto Sans TC 字體 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        /* 設定網頁預設字體 */
+        body {
+            font-family: 'Inter', 'Noto Sans TC', sans-serif;
+        }
+        /* 增加一個簡單的載入中動畫 */
+        .loader {
+            border: 4px solid #f3f3f3; /* Light grey */
+            border-top: 4px solid #6366f1; /* Indigo */
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 min-h-screen flex flex-col items-center p-4 sm:p-8">
+
+    <!-- 主要容器 -->
+    <div class="w-full max-w-5xl mx-auto">
+        
+        <!-- 標題區 -->
+        <header class="text-center mb-10">
+            <h1 class="text-4xl sm:text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-500 to-indigo-600">
+                美食探險家
+            </h1>
+            <p class="text-gray-500 mt-2">為您即時搜尋附近的高分好評店家！</p>
+        </header>
+
+        <!-- 搜尋表單區 -->
+        <div class="bg-white p-6 rounded-xl shadow-lg mb-12">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- 地區選單 (已擴充) -->
+                <div>
+                    <label for="area-select" class="block text-sm font-medium text-gray-600 mb-2">選擇地區</label>
+                    <select id="area-select" class="w-full bg-gray-100 border-gray-300 border rounded-md py-3 px-4 text-gray-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
+                        <option value="台北市信義區">台北市 信義區</option>
+                        <option value="台北市大安區">台北市 大安區</option>
+                        <option value="台北市中山區">台北市 中山區</option>
+                        <option value="台北市松山區">台北市 松山區</option>
+                        <option value="台北市中正區">台北市 中正區</option>
+                        <option value="台北市萬華區">台北市 萬華區</option>
+                        <option value="台北市內湖區">台北市 內湖區</option>
+                        <option value="台北市士林區">台北市 士林區</option>
+                        <option value="台北市大同區">台北市 大同區</option>
+                        <option value="台北市文山區">台北市 文山區</option>
+                        <option value="新北市板橋區">新北市 板橋區</option>
+                        <option value="新北市中和區">新北市 中和區</option>
+                        <option value="新北市永和區">新北市 永和區</option>
+                        <option value="新北市新莊區">新北市 新莊區</option>
+                        <option value="新北市新店區">新北市 新店區</option>
+                        <option value="新北市三重區">新北市 三重區</option>
+                    </select>
+                </div>
+                <!-- 美食種類選單 (已擴充) -->
+                <div>
+                    <label for="cuisine-select" class="block text-sm font-medium text-gray-600 mb-2">選擇美食種類</label>
+                    <select id="cuisine-select" class="w-full bg-gray-100 border-gray-300 border rounded-md py-3 px-4 text-gray-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
+                        <option value="牛肉麵">牛肉麵</option>
+                        <option value="火鍋">火鍋</option>
+                        <option value="日式料理">日式料理</option>
+                        <option value="韓式料理">韓式料理</option>
+                        <option value="義大利麵">義大利麵</option>
+                        <option value="美式漢堡">美式漢堡</option>
+                        <option value="泰式料理">泰式料理</option>
+                        <option value="咖啡廳">咖啡廳</option>
+                        <option value="早午餐">早午餐</option>
+                        <option value="小吃">小吃</option>
+                        <option value="甜點">甜點</option>
+                        <option value="麵包店">麵包店</option>
+                        <option value="素食">素食</option>
+                    </select>
+                </div>
+            </div>
+            <!-- 功能優化：僅顯示營業中選項 -->
+            <div class="mt-4 flex items-center justify-center">
+                <input id="open-now-checkbox" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                <label for="open-now-checkbox" class="ml-2 block text-sm text-gray-700 select-none">僅顯示目前營業中店家</label>
+            </div>
+             <!-- 搜尋按鈕 (預設為禁用狀態) -->
+            <button id="search-button" class="mt-5 w-full bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-all flex items-center justify-center opacity-50 cursor-not-allowed" disabled>
+                <span id="button-text">等待地圖服務...</span>
+                <div id="button-loader" class="loader hidden"></div>
+            </button>
+        </div>
+
+        <!-- 結果顯示區 -->
+        <main id="results-container" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+            <!-- 搜尋結果將會動態插入到這裡 -->
+        </main>
+    </div>
+
+    <!-- 
+        重要！載入 Google Maps JavaScript API 
+        已將您的 API 金鑰加入下方。
+    -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB-Ev8iMdRHstXwwFL2L6JpghYzgGsbiqY&libraries=places&callback=initMap&language=zh-TW" async defer></script>
+    
+    <script>
+        // 取得頁面上的元素
+        const searchButton = document.getElementById('search-button');
+        const areaSelect = document.getElementById('area-select');
+        const cuisineSelect = document.getElementById('cuisine-select');
+        const openNowCheckbox = document.getElementById('open-now-checkbox'); 
+        const resultsContainer = document.getElementById('results-container');
+        const buttonText = document.getElementById('button-text');
+        const buttonLoader = document.getElementById('button-loader');
+
+        let placesService;
+
+        // Google Maps API 載入完成後的回呼函式
+        function initMap() {
+            // 建立一個暫時的地圖物件來初始化 PlacesService
+            const map = new google.maps.Map(document.createElement('div'));
+            placesService = new google.maps.places.PlacesService(map);
+            console.log('Google Maps Places Service 已準備就緒！');
+
+            // *** FIX: 啟用搜尋按鈕，因為服務已準備好 ***
+            searchButton.disabled = false;
+            searchButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            buttonText.textContent = '開始搜尋';
+        }
+
+        // *** NEW: 增加一個超時檢查，以防API載入失敗 ***
+        window.setTimeout(() => {
+            if (!placesService) {
+                console.error("Google Maps Service failed to load.");
+                resultsContainer.innerHTML = `<p class="text-red-500 col-span-full text-center">無法載入 Google Maps 服務。請檢查您的網路連線、API金鑰設定，或重新整理頁面。</p>`;
+                // 更新按鈕狀態以反映錯誤
+                buttonText.textContent = '地圖服務載入失敗';
+                searchButton.disabled = true;
+                 // 確保按鈕視覺上是錯誤狀態
+                searchButton.classList.add('bg-red-500', 'cursor-not-allowed');
+                searchButton.classList.remove('bg-gradient-to-r', 'from-purple-500', 'to-indigo-600');
+            }
+        }, 5000); // 5秒超時
+
+        // 搜尋按鈕的點擊事件監聽器
+        searchButton.addEventListener('click', (event) => {
+            event.preventDefault(); // 防止表單預設提交行為
+            searchRestaurants();
+        });
+
+        // 搜尋餐廳的主要函式
+        async function searchRestaurants() {
+            const area = areaSelect.value;
+            const cuisine = cuisineSelect.value;
+            const onlyOpen = openNowCheckbox.checked;
+
+            if (!placesService) {
+                // 這個情況現在比較不可能發生，但保留以防萬一
+                resultsContainer.innerHTML = `<p class="text-red-500 col-span-full text-center">Google Maps 服務尚未準備好，請稍後再試。</p>`;
+                return;
+            }
+
+            showLoading(true);
+            resultsContainer.innerHTML = `<div class="col-span-full text-center text-gray-500">正在努力搜尋中，請稍候...</div>`; 
+
+            const request = {
+                query: `${area} ${cuisine}`,
+                fields: ['place_id', 'name', 'rating', 'photos'],
+            };
+
+            placesService.textSearch(request, async (results, status) => {
+                if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+                    const highRatedResults = results.filter(place => place.rating >= 4.0 && place.photos && place.place_id);
+                    
+                    if(highRatedResults.length === 0) {
+                        resultsContainer.innerHTML = `<p class="text-gray-500 col-span-full text-center">找不到評分高於 4.0 的相關餐廳，請試試其他關鍵字。</p>`;
+                        showLoading(false);
+                        return;
+                    }
+                    
+                    const cardDataPromises = highRatedResults.map(place => processPlace(place, onlyOpen));
+                    const cardDataList = await Promise.all(cardDataPromises);
+                    
+                    resultsContainer.innerHTML = '';
+                    
+                    const validCards = cardDataList.filter(data => data !== null);
+                    
+                    validCards.sort((a, b) => {
+                        const reviewsB = b.user_ratings_total || 0;
+                        const reviewsA = a.user_ratings_total || 0;
+                        if (reviewsB !== reviewsA) {
+                            return reviewsB - reviewsA;
+                        }
+                        return (b.rating || 0) - (a.rating || 0);
+                    });
+
+                    if (validCards.length > 0) {
+                        validCards.forEach(data => {
+                            const card = createRestaurantCard(data);
+                            resultsContainer.appendChild(card);
+                        });
+                    } else {
+                        const message = onlyOpen ? "抱歉，目前找不到「營業中」且評分高於 4.0 的相關餐廳。" : "找不到任何相關餐廳。";
+                        resultsContainer.innerHTML = `<p class="text-gray-500 col-span-full text-center">${message}</p>`;
+                    }
+
+                } else {
+                    resultsContainer.innerHTML = `<p class="text-red-500 col-span-full text-center">搜尋時發生錯誤，請確認您的 API 金鑰是否正確、已啟用 Places API 並連結有效帳單。 錯誤訊息: ${status}</p>`;
+                }
+                showLoading(false);
+            });
+        }
+        
+        async function processPlace(place, onlyOpen) {
+            try {
+                const detailedPlace = await getPlaceDetails(place.place_id);
+                if (onlyOpen) {
+                    const isOpen = detailedPlace.opening_hours?.isOpen?.();
+                    if (isOpen === false) {
+                        console.log(`已過濾休息中店家: ${detailedPlace.name}`);
+                        return null; 
+                    }
+                }
+                return detailedPlace; 
+            } catch (error) {
+                console.error(`處理地點 ${place.name} 時發生錯誤:`, error);
+                return null; 
+            }
+        }
+
+        function getPlaceDetails(placeId) {
+            return new Promise((resolve, reject) => {
+                const request = {
+                    placeId: placeId,
+                    fields: ['name', 'rating', 'user_ratings_total', 'formatted_address', 'photos', 'place_id', 'opening_hours', 'url']
+                };
+                placesService.getDetails(request, (place, status) => {
+                    if (status === google.maps.places.PlacesServiceStatus.OK && place) {
+                        resolve(place);
+                    } else {
+                        reject(new Error(`無法獲取地點詳細資訊: ${status}`));
+                    }
+                });
+            });
+        }
+        
+        function createRestaurantCard(place) {
+            const card = document.createElement('div');
+            card.className = "bg-white rounded-2xl shadow-lg overflow-hidden transform hover:-translate-y-2 transition-transform duration-300 flex flex-col";
+            const photoUrl = place.photos?.[0]?.getUrl({ maxWidth: 400, maxHeight: 225 }) ?? 'https://placehold.co/400x225/e2e8f0/94a3b8?text=暫無圖片';
+            const ratingStars = '★'.repeat(Math.round(place.rating)) + '☆'.repeat(5 - Math.round(place.rating));
+            const mapsUrl = place.url || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name)}&query_place_id=${place.place_id}`;
+            let hoursInfo = `<p class="text-sm text-gray-500">未提供營業時間資訊</p>`;
+            if (place.opening_hours) {
+                const isOpen = place.opening_hours.isOpen?.();
+                let statusText = '';
+                if (isOpen !== null && typeof isOpen !== 'undefined') {
+                    const statusClass = isOpen ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
+                    statusText = `<span class="${statusClass}">${isOpen ? '營業中' : '休息中'}</span>`;
+                }
+
+                const weekdayText = place.opening_hours.weekday_text;
+                let todayHours = '';
+                if (weekdayText && weekdayText.length > 0) {
+                    const googleDayIndex = (new Date().getDay() + 6) % 7; 
+                    todayHours = weekdayText[googleDayIndex];
+                    todayHours = todayHours.substring(todayHours.indexOf(':') + 2);
+                }
+                hoursInfo = `<p class="text-sm">${statusText} <span class="text-gray-600">${statusText ? ' • ' : ''} ${todayHours || ''}</span></p>`;
+            }
+
+            card.innerHTML = `
+                <a href="${mapsUrl}" target="_blank" rel="noopener noreferrer" class="block">
+                    <img src="${photoUrl}" alt="${place.name}" class="w-full h-48 object-cover" onerror="this.onerror=null;this.src='https://placehold.co/400x225/e2e8f0/94a3b8?text=圖片載入失敗';">
+                </a>
+                <div class="p-5 flex flex-col flex-grow">
+                    <h2 class="text-xl font-bold mb-2 text-gray-900">${place.name}</h2>
+                    <div class="flex items-center mb-4">
+                        <span class="text-yellow-500 mr-2" aria-label="評分">${ratingStars}</span>
+                        <span class="text-gray-500 text-sm">${place.rating} (${place.user_ratings_total || 0} 則評論)</span>
+                    </div>
+                    <div class="space-y-3 text-sm mb-4 flex-grow">
+                         <div class="flex items-start">
+                            <svg class="w-5 h-5 mr-2 mt-0.5 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            <p class="text-gray-600">${place.formatted_address || '未提供地址'}</p>
+                        </div>
+                        <div class="flex items-start">
+                            <svg class="w-5 h-5 mr-2 mt-0.5 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            ${hoursInfo}
+                        </div>
+                    </div>
+                </div>
+            `;
+            return card;
+        }
+
+        function showLoading(isLoading) {
+            buttonText.classList.toggle('hidden', isLoading);
+            buttonLoader.classList.toggle('hidden', !isLoading);
+            searchButton.disabled = isLoading;
+            searchButton.classList.toggle('opacity-75', isLoading);
+        }
+
+    </script>
+</body>
+</html>
