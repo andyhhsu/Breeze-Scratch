@@ -237,13 +237,35 @@
                     whiteNoiseSource.start();
                     scratchGainNodeRef.current = gainNode;
                     isAudioInitializedRef.current = true;
+                    console.log("Audio Initialized");
                 } catch (e) { console.error("Audio init error", e); }
             }, []);
 
             const unlockAudio = useCallback(() => {
                 if (!isAudioInitializedRef.current) initAudio();
-                if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
+                if (audioCtxRef.current?.state === 'suspended') {
+                    audioCtxRef.current.resume().then(() => {
+                        console.log("Audio Context Resumed");
+                    }).catch(e => console.error(e));
+                }
             }, [initAudio]);
+
+            // [FIX] 新增：監聽使用者互動以確保 AudioContext 被解鎖
+            useEffect(() => {
+                const handleUserGesture = () => {
+                    unlockAudio();
+                };
+                
+                window.addEventListener('click', handleUserGesture);
+                window.addEventListener('touchstart', handleUserGesture);
+                window.addEventListener('keydown', handleUserGesture);
+
+                return () => {
+                    window.removeEventListener('click', handleUserGesture);
+                    window.removeEventListener('touchstart', handleUserGesture);
+                    window.removeEventListener('keydown', handleUserGesture);
+                };
+            }, [unlockAudio]);
 
             const playWinSound = useCallback(() => {
                 if (isMuted || !audioCtxRef.current) return;
@@ -328,7 +350,7 @@
                 startNewGame();
             }, [mode]);
 
-            // 組件卸載時嘗試關閉 Context (避免記憶體洩漏，但在 SPA 中通常不觸發)
+            // 組件卸載時嘗試關閉 Context
             useEffect(() => {
                 return () => { 
                     if(audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
@@ -378,8 +400,8 @@
                 };
                 const events = ['mousemove', 'mousedown', 'touchstart', 'click', 'keydown'];
                 const handler = () => { 
-                    resetTimer(); 
-                    // 這裡不需每次都 unlockAudio，避免頻繁 resume 造成問題，改在 touchstart 處理
+                    resetTimer();
+                    // unlockAudio 已經由上方的 useEffect 處理，這裡只需重置計時器
                 };
                 events.forEach(e => window.addEventListener(e, handler));
                 resetTimer();
