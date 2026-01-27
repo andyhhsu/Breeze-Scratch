@@ -208,22 +208,13 @@
             const audioCtxRef = useRef(null);
             const scratchGainNodeRef = useRef(null);
             const isScratchingRef = useRef(false);
-            
-            // 強健的音效初始化功能
-            const ensureAudioContext = useCallback(() => {
-                const AudioContext = window.AudioContext || window.webkitAudioContext;
-                if (!AudioContext) return null;
+            const isAudioInitializedRef = useRef(false);
 
-                // 如果 Context 存在且沒壞掉，直接回傳
-                if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-                    if (audioCtxRef.current.state === 'suspended') {
-                        audioCtxRef.current.resume().catch(e => console.log("Resume failed", e));
-                    }
-                    return audioCtxRef.current;
-                }
-
-                // 否則，重建整個音效引擎
+            const initAudio = useCallback(() => {
+                if (isAudioInitializedRef.current || typeof window === 'undefined') return;
                 try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioContext) return;
                     const ctx = new AudioContext();
                     audioCtxRef.current = ctx;
                     
@@ -235,32 +226,28 @@
                     const whiteNoiseSource = ctx.createBufferSource();
                     whiteNoiseSource.buffer = noiseBuffer;
                     whiteNoiseSource.loop = true;
-                    
                     const gainNode = ctx.createGain();
                     gainNode.gain.value = 0;
-                    
                     const filter = ctx.createBiquadFilter();
                     filter.type = 'lowpass';
                     filter.frequency.value = 600; 
-                    
                     whiteNoiseSource.connect(filter);
                     filter.connect(gainNode);
                     gainNode.connect(ctx.destination);
-                    
                     whiteNoiseSource.start();
                     scratchGainNodeRef.current = gainNode;
-                    return ctx;
-                } catch (e) {
-                    console.error("Audio init error", e);
-                    return null;
-                }
+                    isAudioInitializedRef.current = true;
+                } catch (e) { console.error("Audio init error", e); }
             }, []);
 
-            const playWinSound = useCallback(() => {
-                if (isMuted) return;
-                const ctx = ensureAudioContext(); // 確保 Context 活著
-                if (!ctx) return;
+            const unlockAudio = useCallback(() => {
+                if (!isAudioInitializedRef.current) initAudio();
+                if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
+            }, [initAudio]);
 
+            const playWinSound = useCallback(() => {
+                if (isMuted || !audioCtxRef.current) return;
+                const ctx = audioCtxRef.current;
                 const playTone = (freq, start, dur) => {
                     const osc = ctx.createOscillator();
                     const gain = ctx.createGain();
@@ -276,18 +263,12 @@
                 const now = ctx.currentTime;
                 playTone(523.25, now, 0.2); playTone(659.25, now+0.1, 0.2); 
                 playTone(783.99, now+0.2, 0.2); playTone(1046.50, now+0.3, 0.6);
-            }, [isMuted, ensureAudioContext]);
+            }, [isMuted]);
 
             const toggleScratchSound = useCallback((playing) => {
-                if (isMuted) return;
-                // 如果要播放，先確保引擎活著
-                if (playing) ensureAudioContext();
-                
-                if (!scratchGainNodeRef.current || !audioCtxRef.current) return;
-
+                if (isMuted || !scratchGainNodeRef.current) return;
                 const gain = scratchGainNodeRef.current.gain;
                 const now = audioCtxRef.current.currentTime;
-                
                 if (playing && !isScratchingRef.current) {
                     gain.cancelScheduledValues(now);
                     gain.linearRampToValueAtTime(0.2, now + 0.1);
@@ -297,7 +278,7 @@
                     gain.linearRampToValueAtTime(0, now + 0.1);
                     isScratchingRef.current = false;
                 }
-            }, [isMuted, ensureAudioContext]);
+            }, [isMuted]);
 
             const calculatePrize = (currentPrizes) => {
                 let pool = [];
@@ -571,11 +552,11 @@
                                 onScratchEnd={onScratchEnd}
                             />
 
-                            {/* Finger Hint Animation (Overlay) - Hide when scratching starts */}
+                            {/* Coin Hint Animation (Overlay) - Hide when scratching starts */}
                             {!hasStartedScratching && (
                                 <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-20">
-                                    <div className="animate-scratch-hand opacity-80 text-7xl drop-shadow-2xl">
-                                        👆
+                                    <div className="animate-scratch-hand opacity-90 text-7xl drop-shadow-2xl">
+                                        🪙
                                     </div>
                                 </div>
                             )}
