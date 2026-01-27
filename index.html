@@ -574,6 +574,7 @@
 
         const ScratchCanvas = ({ width, height, onComplete, resetKey, onScratchStart, onScratchEnd }) => {
             const canvasRef = useRef(null);
+            const cursorRef = useRef(null); // Ref for Coin
             const [completed, setCompleted] = useState(false);
             const [isDrawing, setIsDrawing] = useState(false);
 
@@ -644,19 +645,63 @@
                 ctx.arc(x, y, 35, 0, Math.PI * 2);
                 ctx.fill();
 
+                // Move coin cursor
+                if (cursorRef.current) {
+                    const cursorX = clientX - rect.left;
+                    const cursorY = clientY - rect.top;
+                    cursorRef.current.style.transform = `translate(${cursorX}px, ${cursorY}px)`;
+                }
+
                 if (Math.random() > 0.7) checkProgress();
             };
 
-            const start = () => { if (!completed) { setIsDrawing(true); onScratchStart(); } };
-            const end = () => { setIsDrawing(false); onScratchEnd(); };
+            const start = (e) => { 
+                if (!completed) { 
+                    setIsDrawing(true); 
+                    onScratchStart(); 
+                    
+                    // Show and position coin
+                    if (cursorRef.current) {
+                        cursorRef.current.style.opacity = '1';
+                        const canvas = canvasRef.current;
+                        const rect = canvas.getBoundingClientRect();
+                        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                        const cursorX = clientX - rect.left;
+                        const cursorY = clientY - rect.top;
+                        cursorRef.current.style.transform = `translate(${cursorX}px, ${cursorY}px)`;
+                    }
+                } 
+            };
+            
+            const end = () => { 
+                setIsDrawing(false); 
+                onScratchEnd(); 
+                // Hide coin
+                if (cursorRef.current) cursorRef.current.style.opacity = '0';
+            };
 
             return (
-                <canvas
-                    ref={canvasRef}
-                    className="absolute inset-0 w-full h-full cursor-pointer touch-none z-10"
-                    onMouseDown={start} onMouseUp={end} onMouseLeave={end} onMouseMove={draw}
-                    onTouchStart={start} onTouchEnd={end} onTouchMove={draw}
-                />
+                <>
+                    <canvas
+                        ref={canvasRef}
+                        className="absolute inset-0 w-full h-full cursor-pointer touch-none z-10"
+                        onMouseDown={start} onMouseUp={end} onMouseLeave={end} onMouseMove={draw}
+                        onTouchStart={start} onTouchEnd={end} onTouchMove={draw}
+                    />
+                    <div 
+                        ref={cursorRef}
+                        className="absolute top-0 left-0 pointer-events-none z-20 text-5xl transition-opacity duration-100"
+                        style={{
+                            opacity: 0, 
+                            transform: 'translate(0,0)', 
+                            marginLeft: '-24px', 
+                            marginTop: '-24px'
+                        }}
+                    >
+                        🪙
+                    </div>
+                </>
             );
         };
 
