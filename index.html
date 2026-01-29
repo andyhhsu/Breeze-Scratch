@@ -625,7 +625,7 @@
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.font = 'bold 32px sans-serif';
-                ctx.fillText('刮開立即中獎', width / 2, height / 2);
+                ctx.fillText('刮開星好運', width / 2, height / 2);
 
                 // Border
                 ctx.strokeStyle = '#B8860B';
@@ -755,8 +755,8 @@
                                     <div className="mb-8 p-5 bg-yellow-50 border-2 border-dashed border-yellow-500 rounded-xl">
                                         <div className="text-left text-base text-gray-800 space-y-3 font-bold">
                                             <p className="flex gap-3"><span className="text-red-600 text-xl">1.</span> <span>找到我們熱情的門市夥伴！</span></p>
-                                            <p className="flex gap-3"><span className="text-red-600 text-xl">2.</span> <span>掃描QR Code，加入官方LINE@。</span></p>
-                                            <p className="flex gap-3"><span className="text-red-600 text-xl">3.</span> <span>即可參加「正式抽獎」！</span></p>
+                                            <p className="flex gap-3"><span className="text-red-600 text-xl">2.</span> <span>掃描QR Code，完成Galaxy S新機購買意願調查 (還可以抽Galaxy S25!)</span></p>
+                                            <p className="flex gap-3"><span className="text-red-600 text-xl">3.</span> <span>即可參加正式「刮刮樂乙次」!</span></p>
                                         </div>
                                         <div className="w-48 h-48 bg-white mx-auto mt-4 p-2 shadow-sm rounded-lg flex items-center justify-center">
                                            <img src="https://github.com/andyhhsu/Breeze-Scratch/blob/main/qr.ioi.tw%20(26).png?raw=true" className="w-full h-full object-contain" alt="QR Code" />
@@ -764,17 +764,24 @@
                                     </div>
                                 </>
                             ) : (
-                                /* Official Mode Content - NO QR, Larger Prize */
+                                /* Official Mode Content */
                                 <div className="flex flex-col items-center justify-center py-4">
-                                    <div className="w-40 h-40 bg-yellow-100 rounded-full flex items-center justify-center mb-6 animate-pulse-glow shadow-inner border-4 border-yellow-300">
-                                        <div className="text-8xl filter drop-shadow-lg transform hover:scale-110 transition-transform">{result?.icon}</div>
+                                    <div className="w-32 h-32 md:w-40 md:h-40 bg-yellow-100 rounded-full flex items-center justify-center mb-4 animate-pulse-glow shadow-inner border-4 border-yellow-300">
+                                        <div className="text-6xl md:text-8xl filter drop-shadow-lg transform hover:scale-110 transition-transform">{result?.icon}</div>
                                     </div>
-                                    <h3 className="text-4xl font-black text-red-600 text-center leading-tight mb-3 drop-shadow-sm">
+                                    <h3 className="text-3xl md:text-4xl font-black text-red-600 text-center leading-tight mb-2 drop-shadow-sm">
                                         {result?.name}
                                     </h3>
-                                    <p className="text-gray-500 text-base mb-8 font-medium bg-white/80 px-4 py-1 rounded-full shadow-sm">
-                                        請向門市人員出示此畫面領獎
+                                    <p className="text-gray-500 text-sm md:text-base mb-6 font-medium bg-white/80 px-4 py-1 rounded-full shadow-sm">
+                                        加入門市line@領獎!
                                     </p>
+
+                                    {/* Line@ Verification QR */}
+                                    <div className="bg-white p-3 rounded-xl shadow-md border border-gray-200 flex flex-col items-center w-full max-w-[200px]">
+                                        <div className="w-32 h-32">
+                                            <img src="https://github.com/andyhhsu/Breeze-Scratch/blob/main/qr.ioi.tw%20(26).png?raw=true" className="w-full h-full object-contain" alt="LINE@ Verification" />
+                                        </div>
+                                    </div>
                                 </div>
                             )}
 
