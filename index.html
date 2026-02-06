@@ -336,14 +336,21 @@
                     if (random < prize.probability) return prize;
                     random -= prize.probability;
                 }
-                return pool[pool.length - 1];
+                
+                // Fallback check to ensure we always return a valid prize object
+                if (pool.length > 0) return pool[pool.length - 1];
+                
+                return { id: -1, name: '下次好運！', icon: '🐎', type: 'none' };
             };
 
             const startNewGame = useCallback(() => {
-                setCurrentResult(calculatePrize(prizes));
-                setResetKey(prev => prev + 1);
-                setShowResultModal(false);
-                toggleScratchSound(false);
+                const newPrize = calculatePrize(prizes);
+                if (newPrize) {
+                    setCurrentResult(newPrize);
+                    setResetKey(prev => prev + 1);
+                    setShowResultModal(false);
+                    toggleScratchSound(false);
+                }
             }, [prizes, toggleScratchSound, mode]);
 
             useEffect(() => {
@@ -360,9 +367,16 @@
             }, []);
 
             const handleScratchComplete = () => {
+                // GUARD CLAUSE: 確保有結果才繼續，避免開啟空白 Modal
+                if (!currentResult) {
+                    console.error("Scratch completed but result is null. Retrying startNewGame...");
+                    startNewGame(); 
+                    return; 
+                }
+
                 toggleScratchSound(false);
                 
-                if (mode === 'official' && currentResult && currentResult.id > 0) {
+                if (mode === 'official' && currentResult.id > 0) {
                     setPrizes(prev => prev.map(p => p.id === currentResult.id ? { ...p, count: p.count - 1 } : p));
                 }
 
@@ -729,6 +743,10 @@
 
         const ResultModal = ({ result, onClose, mode }) => {
             const isSimulation = mode === 'simulation';
+            
+            // Safety guard: if no result, return null to render nothing
+            if (!result) return null;
+
             return (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
                     <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl transform transition-all animate-bounce-in">
