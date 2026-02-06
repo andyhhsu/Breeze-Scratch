@@ -65,7 +65,7 @@
         const { useState, useEffect, useRef, useCallback } = React;
 
         // ==========================================
-        //  Google Apps Script URL (已更新)
+        //  Google Apps Script URL
         // ==========================================
         const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbziifJpiWh5YeffZOMUs58QXr9NWQpG6AjEErtjUHR5o5RjIwEvVgkFXh3Y2-LO_Vfg/exec";
 
@@ -84,14 +84,15 @@
 
         const STORAGE_KEY = 'samsung_cny_prizes_v2';
 
+        // 庫存(count) 雖然保留在資料結構中，但在邏輯上已忽略，不再扣除
         const DEFAULT_PRIZES = [
-          { id: 1, name: 'ITFIT電動牙刷', count: 5, probability: 0, type: 'grand', icon: '🪥' },
-          { id: 2, name: '輕瓷保溫杯', count: 10, probability: 0, type: 'major', icon: '🥤' },
-          { id: 3, name: '10,000mAh行動電源', count: 5, probability: 0, type: 'grand', icon: '🔋' },
-          { id: 4, name: '放鬆筋膜槍', count: 5, probability: 0, type: 'grand', icon: '🔫' },
-          { id: 5, name: '三星紅包袋', count: 100, probability: 25, type: 'normal', icon: '🧧' },
-          { id: 6, name: '三星原子筆', count: 200, probability: 70, type: 'normal', icon: '🖊️' },
-          { id: 7, name: '三星清潔組', count: 50, probability: 5, type: 'normal', icon: '🧼' },
+          { id: 1, name: 'ITFIT電動牙刷', count: 999, probability: 0, type: 'grand', icon: '🪥' },
+          { id: 2, name: '輕瓷保溫杯', count: 999, probability: 0, type: 'major', icon: '🥤' },
+          { id: 3, name: '10,000mAh行動電源', count: 999, probability: 0, type: 'grand', icon: '🔋' },
+          { id: 4, name: '放鬆筋膜槍', count: 999, probability: 0, type: 'grand', icon: '🔫' },
+          { id: 5, name: '三星紅包袋', count: 999, probability: 25, type: 'normal', icon: '🧧' },
+          { id: 6, name: '三星原子筆', count: 999, probability: 70, type: 'normal', icon: '🖊️' },
+          { id: 7, name: '三星清潔組', count: 999, probability: 5, type: 'normal', icon: '🧼' },
         ];
 
         // --- Pin Pad 鍵盤組件 ---
@@ -323,8 +324,8 @@
                         }
                     });
                 } else {
-                    // 正式模式：依據後台設定的機率與庫存
-                    pool = currentPrizes.filter(p => p.count > 0 && p.probability > 0);
+                    // 正式模式：[修改] 不再檢查庫存(count > 0)，僅檢查機率 > 0
+                    pool = currentPrizes.filter(p => p.probability > 0);
                 }
 
                 if (pool.length === 0) return { id: -1, name: '下次好運！', icon: '🐎', type: 'none' };
@@ -337,9 +338,7 @@
                     random -= prize.probability;
                 }
                 
-                // Fallback check to ensure we always return a valid prize object
                 if (pool.length > 0) return pool[pool.length - 1];
-                
                 return { id: -1, name: '下次好運！', icon: '🐎', type: 'none' };
             };
 
@@ -367,18 +366,18 @@
             }, []);
 
             const handleScratchComplete = () => {
-                // GUARD CLAUSE: 確保有結果才繼續，避免開啟空白 Modal
+                // GUARD CLAUSE
                 if (!currentResult) {
-                    console.error("Scratch completed but result is null. Retrying startNewGame...");
                     startNewGame(); 
                     return; 
                 }
 
                 toggleScratchSound(false);
                 
-                if (mode === 'official' && currentResult.id > 0) {
-                    setPrizes(prev => prev.map(p => p.id === currentResult.id ? { ...p, count: p.count - 1 } : p));
-                }
+                // [修改] 正式模式下，不再自動扣庫存
+                // if (mode === 'official' && currentResult.id > 0) {
+                //    setPrizes(prev => prev.map(p => p.id === currentResult.id ? { ...p, count: p.count - 1 } : p));
+                // }
 
                 confetti({
                     particleCount: 150,
@@ -404,18 +403,18 @@
                 let timeoutId;
                 const resetTimer = () => {
                     clearTimeout(timeoutId);
+                    // [修改] 閒置 30 秒 (30000ms) 自動重置
                     timeoutId = setTimeout(() => {
                         if (mode === 'official') {
                             setMode('simulation');
                         } else {
                             startNewGame();
                         }
-                    }, 180000); // 3分鐘
+                    }, 30000); 
                 };
                 const events = ['mousemove', 'mousedown', 'touchstart', 'click', 'keydown'];
                 const handler = () => { 
                     resetTimer();
-                    // unlockAudio 已經由上方的 useEffect 處理，這裡只需重置計時器
                 };
                 events.forEach(e => window.addEventListener(e, handler));
                 resetTimer();
@@ -443,9 +442,9 @@
                 }
             };
 
-            // 重置資料 (恢復預設)
+            // 重置資料
             const handleResetData = () => {
-                if(confirm('確定要重置所有數據嗎？這將恢復預設庫存與機率。')) {
+                if(confirm('確定要重置所有數據嗎？')) {
                     setPrizes(DEFAULT_PRIZES);
                     localStorage.removeItem(STORAGE_KEY);
                 }
@@ -744,7 +743,6 @@
         const ResultModal = ({ result, onClose, mode }) => {
             const isSimulation = mode === 'simulation';
             
-            // Safety guard: if no result, return null to render nothing
             if (!result) return null;
 
             return (
@@ -831,14 +829,13 @@
                         <div className="max-w-4xl mx-auto bg-white rounded-xl shadow p-6">
                             <table className="w-full text-left">
                                 <thead className="bg-gray-50 text-gray-600 text-sm border-b">
-                                    <tr><th className="p-3">圖示</th><th className="p-3">獎品名稱</th><th className="p-3">剩餘數量</th><th className="p-3">權重 (%)</th><th className="p-3">標籤</th></tr>
+                                    <tr><th className="p-3">圖示</th><th className="p-3">獎品名稱</th><th className="p-3">權重 (%)</th><th className="p-3">標籤</th></tr>
                                 </thead>
                                 <tbody className="divide-y">
                                     {prizes.map((p) => (
                                         <tr key={p.id} className="hover:bg-gray-50">
                                             <td className="p-3 text-2xl">{p.icon}</td>
                                             <td className="p-3"><input type="text" value={p.name} onChange={(e)=>handleChange(p.id,'name',e.target.value)} className="border rounded px-2 py-1 w-full"/></td>
-                                            <td className="p-3"><input type="number" min="0" value={String(p.count)} onChange={(e)=>handleChange(p.id,'count',parseInt(e.target.value)||0)} className="border rounded px-2 py-1 w-24"/></td>
                                             <td className="p-3 flex items-center gap-2">
                                                 <input type="number" min="0" step="0.001" value={String(p.probability)} onChange={(e)=>handleChange(p.id,'probability',parseFloat(e.target.value)||0)} className="border rounded w-24 text-center"/>
                                             </td>
