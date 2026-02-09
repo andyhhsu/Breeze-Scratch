@@ -96,7 +96,7 @@
         ];
 
         // --- Pin Pad 鍵盤組件 ---
-        const PinPadModal = ({ isOpen, onClose, onSuccess, targetAction }) => {
+        const PinPadModal = ({ isOpen, onClose, onSuccess, targetAction, unlockAudio }) => {
             const [pin, setPin] = useState("");
             
             useEffect(() => {
@@ -118,6 +118,7 @@
             const handleSubmit = () => {
                 const correctPin = targetAction === 'unlock_official' ? '5444' : '6699';
                 if (pin === correctPin) {
+                    if (unlockAudio) unlockAudio(); // 當店員解鎖時，順便喚醒音效
                     onSuccess();
                     handleClose();
                 } else {
@@ -244,14 +245,17 @@
 
             const unlockAudio = useCallback(() => {
                 if (!isAudioInitializedRef.current) initAudio();
-                if (audioCtxRef.current?.state === 'suspended') {
-                    audioCtxRef.current.resume().then(() => {
-                        console.log("Audio Context Resumed");
-                    }).catch(e => console.error(e));
+                // [FIX] 更積極地檢查並恢復 Context
+                if (audioCtxRef.current) {
+                    if (audioCtxRef.current.state === 'suspended') {
+                        audioCtxRef.current.resume().then(() => {
+                            console.log("Audio Context Resumed via unlock");
+                        }).catch(e => console.error("Audio resume failed", e));
+                    }
                 }
             }, [initAudio]);
 
-            // [FIX] 新增：監聽使用者互動以確保 AudioContext 被解鎖
+            // [FIX] 新增：擴大監聽範圍，包含 pointerdown 以適應觸控螢幕
             useEffect(() => {
                 const handleUserGesture = () => {
                     unlockAudio();
@@ -259,11 +263,13 @@
                 
                 window.addEventListener('click', handleUserGesture);
                 window.addEventListener('touchstart', handleUserGesture);
+                window.addEventListener('pointerdown', handleUserGesture); // 新增
                 window.addEventListener('keydown', handleUserGesture);
 
                 return () => {
                     window.removeEventListener('click', handleUserGesture);
                     window.removeEventListener('touchstart', handleUserGesture);
+                    window.removeEventListener('pointerdown', handleUserGesture);
                     window.removeEventListener('keydown', handleUserGesture);
                 };
             }, [unlockAudio]);
@@ -271,6 +277,10 @@
             const playWinSound = useCallback(() => {
                 if (isMuted || !audioCtxRef.current) return;
                 const ctx = audioCtxRef.current;
+                
+                // [FIX] 播放前強制檢查並喚醒
+                if (ctx.state === 'suspended') ctx.resume();
+
                 const playTone = (freq, start, dur) => {
                     const osc = ctx.createOscillator();
                     const gain = ctx.createGain();
@@ -290,6 +300,12 @@
 
             const toggleScratchSound = useCallback((playing) => {
                 if (isMuted || !scratchGainNodeRef.current) return;
+                
+                // [FIX] 刮刮樂開始前強制檢查並喚醒
+                if (audioCtxRef.current?.state === 'suspended') {
+                    audioCtxRef.current.resume();
+                }
+
                 const gain = scratchGainNodeRef.current.gain;
                 const now = audioCtxRef.current.currentTime;
                 if (playing && !isScratchingRef.current) {
@@ -412,7 +428,7 @@
                         }
                     }, 30000); 
                 };
-                const events = ['mousemove', 'mousedown', 'touchstart', 'click', 'keydown'];
+                const events = ['mousemove', 'mousedown', 'touchstart', 'click', 'keydown', 'pointerdown'];
                 const handler = () => { 
                     resetTimer();
                 };
@@ -486,6 +502,7 @@
                         onClose={() => setIsPinPadOpen(false)} 
                         onSuccess={handlePinSuccess}
                         targetAction={pinPadAction}
+                        unlockAudio={unlockAudio}
                     />
 
                     {view === 'game' ? (
@@ -829,13 +846,14 @@
                         <div className="max-w-4xl mx-auto bg-white rounded-xl shadow p-6">
                             <table className="w-full text-left">
                                 <thead className="bg-gray-50 text-gray-600 text-sm border-b">
-                                    <tr><th className="p-3">圖示</th><th className="p-3">獎品名稱</th><th className="p-3">權重 (%)</th><th className="p-3">標籤</th></tr>
+                                    <tr><th className="p-3">圖示</th><th className="p-3">獎品名稱</th><th className="p-3">剩餘數量</th><th className="p-3">權重 (%)</th><th className="p-3">標籤</th></tr>
                                 </thead>
                                 <tbody className="divide-y">
                                     {prizes.map((p) => (
                                         <tr key={p.id} className="hover:bg-gray-50">
                                             <td className="p-3 text-2xl">{p.icon}</td>
                                             <td className="p-3"><input type="text" value={p.name} onChange={(e)=>handleChange(p.id,'name',e.target.value)} className="border rounded px-2 py-1 w-full"/></td>
+                                            <td className="p-3"><input type="number" min="0" value={String(p.count)} onChange={(e)=>handleChange(p.id,'count',parseInt(e.target.value)||0)} className="border rounded px-2 py-1 w-24"/></td>
                                             <td className="p-3 flex items-center gap-2">
                                                 <input type="number" min="0" step="0.001" value={String(p.probability)} onChange={(e)=>handleChange(p.id,'probability',parseFloat(e.target.value)||0)} className="border rounded w-24 text-center"/>
                                             </td>
